@@ -1,0 +1,642 @@
+#pragma Once
+#include <Arduino.h>
+#include <DMD32.h>
+#include <SPI.h>
+#include <time.h>
+
+// Fonts
+#include "fonts/SystemFont5x7.h"
+#include "fonts/Font_12x6.h"
+#include "fonts/Font5x7Nbox.h"
+#include "fonts/Font5x7NboxC.h"
+#include "fonts/Font6x16.h"
+// ================================================================
+//                        CLOCK TASKS
+// ================================================================
+DMD dmd(1, 1);
+
+// Variables
+int _hour12, _hour24, _minute, _second;
+int currentMode = 0; // 0=Clock1, 1=Clock2, 2=Clock3
+
+// --- Config ---
+// Bangladesh Time (UTC +6)
+const long gmtOffset_sec = 6 * 3600;
+const int daylightOffset_sec = 0;
+
+// NTP Servers
+const char *ntpServer1 = "time.google.com";
+const char *ntpServer2 = "time.nist.gov";
+const char *ntpServer3 = "pool.ntp.org";
+
+// ------------------- Helper: Get Time -------------------
+bool myGetLocalTime(struct tm *timeinfo)
+{
+  return getLocalTime(timeinfo, 100);
+}
+// --- Clock 1 ---
+void Clock1Task(void *pvParameters)
+{
+  const long interval = 1000;
+  unsigned long previousMillis = 0;
+  char hr_24[3], mn[3];
+  struct tm timeinfo;
+
+  for (;;)
+  {
+    unsigned long currentMillis = millis();
+    if (currentMillis - previousMillis >= interval)
+    {
+      previousMillis = currentMillis;
+
+      if (myGetLocalTime(&timeinfo))
+      {
+        _hour24 = timeinfo.tm_hour;
+        _minute = timeinfo.tm_min;
+        _second = timeinfo.tm_sec;
+
+        dmd.selectFont(Font12x6);
+        _hour12 = _hour24 % 12;
+        if (_hour12 == 0)
+          _hour12 = 12;
+
+        sprintf(hr_24, "%02d", _hour12);
+        dmd.drawString(1, 2, hr_24, 2, GRAPHICS_NORMAL);
+
+        sprintf(mn, "%02d", _minute);
+        dmd.drawString(18, 2, mn, 2, GRAPHICS_NORMAL);
+
+        if (_second % 2 == 0)
+        {
+          dmd.drawFilledBox(15, 4, 16, 5, GRAPHICS_OR);
+          dmd.drawFilledBox(15, 10, 16, 11, GRAPHICS_OR);
+        }
+        else
+        {
+          dmd.drawFilledBox(15, 4, 16, 5, GRAPHICS_NOR);
+          dmd.drawFilledBox(15, 10, 16, 11, GRAPHICS_NOR);
+        }
+      }
+    }
+    vTaskDelay(50 / portTICK_PERIOD_MS);
+  }
+}
+// --- Clock 2 ---
+void Clock2Task(void *pvParameters)
+{
+  const long interval = 1000;
+  unsigned long previousMillis = 0;
+  char hr_24[3], mn[3];
+  struct tm timeinfo;
+
+  for (;;)
+  {
+    unsigned long currentMillis = millis();
+    if (currentMillis - previousMillis >= interval)
+    {
+      previousMillis = currentMillis;
+
+      if (myGetLocalTime(&timeinfo))
+      {
+        _hour24 = timeinfo.tm_hour;
+        _minute = timeinfo.tm_min;
+        _second = timeinfo.tm_sec;
+
+        dmd.selectFont(Font6x16);
+        _hour12 = _hour24 % 12;
+        if (_hour12 == 0)
+          _hour12 = 12;
+
+        sprintf(hr_24, "%02d", _hour12);
+        dmd.drawString(1, 0, hr_24, 2, GRAPHICS_NORMAL);
+
+        sprintf(mn, "%02d", _minute);
+        dmd.drawString(18, 0, mn, 2, GRAPHICS_NORMAL);
+
+        if (_second % 2 == 0)
+        {
+          dmd.drawFilledBox(15, 4, 16, 5, GRAPHICS_OR);
+          dmd.drawFilledBox(15, 10, 16, 11, GRAPHICS_OR);
+        }
+        else
+        {
+          dmd.drawFilledBox(15, 4, 16, 5, GRAPHICS_NOR);
+          dmd.drawFilledBox(15, 10, 16, 11, GRAPHICS_NOR);
+        }
+      }
+    }
+    vTaskDelay(50 / portTICK_PERIOD_MS);
+  }
+}
+
+void Clock3Task(void *pvParameters)
+{
+  const long interval = 1000;
+  unsigned long previousMillis = 0;
+  
+  // Buffers
+  char hr_24[3], mn[3];
+  char tens_str[2], units_str[2]; // Buffers for single digits
+  
+  struct tm timeinfo;
+  int last_second = -1; 
+
+  // --- Animation Settings ---
+  const int fontHeight = 12; // Height of Font12x6
+  const int secX_Tens = 18;  // X position of left digit
+  const int secX_Units = 25; // X position of right digit (Adjust based on font width)
+  const int secY = 2;        // Target Y position
+  const int gap = 2;         // Gap between sliding numbers
+
+  for (;;)
+  {
+    unsigned long currentMillis = millis();
+    
+    if (myGetLocalTime(&timeinfo))
+    {
+       _second = timeinfo.tm_sec;
+
+       if (_second != last_second) 
+       {
+          _hour24 = timeinfo.tm_hour;
+          _minute = timeinfo.tm_min;
+
+          // Prepare Hour/Minute Strings
+          dmd.selectFont(Font5x7Nbox);
+          _hour12 = _hour24 % 12;
+          if (_hour12 == 0) _hour12 = 12;
+          sprintf(hr_24, "%02d", _hour12);
+          sprintf(mn, "%02d", _minute);
+
+          // Split Seconds into Digits
+          int new_tens = _second / 10;
+          int new_units = _second % 10;
+          
+          int old_tens = (last_second == -1) ? new_tens : last_second / 10;
+          int old_units = (last_second == -1) ? new_units : last_second % 10;
+
+          // --- ANIMATION LOOP ---
+          for (int i = 0; i <= fontHeight + gap; i++) 
+          {
+            // 1. Draw Static Elements (Hours/Mins)
+            dmd.selectFont(Font5x7NboxC);
+            dmd.drawString(3, -1, hr_24, 2, GRAPHICS_NORMAL);
+            dmd.drawString(3, 8, mn, 2, GRAPHICS_NORMAL);
+            dmd.drawFilledBox(15, 4, 16, 5, GRAPHICS_OR);
+            dmd.drawFilledBox(15, 10, 16, 11, GRAPHICS_OR);
+
+            // 2. Clear Seconds Area
+            // Clears from X=18 to X=31
+            dmd.drawFilledBox(secX_Tens, 0, 31, 15, GRAPHICS_NOR); 
+
+            dmd.selectFont(Font12x6);
+
+            // --- DRAW LEFT DIGIT (TENS) ---
+            if (new_tens == old_tens) {
+               // Digit didn't change: Draw static
+               sprintf(tens_str, "%d", new_tens);
+               dmd.drawString(secX_Tens, secY, tens_str, 1, GRAPHICS_OR);
+            } else {
+               // Digit changed: Animate
+               // Old moving Up
+               sprintf(tens_str, "%d", old_tens);
+               dmd.drawString(secX_Tens, secY - i, tens_str, 1, GRAPHICS_OR);
+               // New moving In
+               sprintf(tens_str, "%d", new_tens);
+               dmd.drawString(secX_Tens, (secY + fontHeight + gap) - i, tens_str, 1, GRAPHICS_OR);
+            }
+
+            // --- DRAW RIGHT DIGIT (UNITS) ---
+            if (new_units == old_units) {
+               // Rare, but handles startup or specialized cases
+               sprintf(units_str, "%d", new_units);
+               dmd.drawString(secX_Units, secY, units_str, 1, GRAPHICS_OR);
+            } else {
+               // Digit changed: Animate
+               // Old moving Up
+               sprintf(units_str, "%d", old_units);
+               dmd.drawString(secX_Units, secY - i, units_str, 1, GRAPHICS_OR);
+               // New moving In
+               sprintf(units_str, "%d", new_units);
+               dmd.drawString(secX_Units, (secY + fontHeight + gap) - i, units_str, 1, GRAPHICS_OR);
+            }
+
+            vTaskDelay(30 / portTICK_PERIOD_MS); // Animation Speed
+          }
+
+          last_second = _second;
+       }
+    }
+    vTaskDelay(50 / portTICK_PERIOD_MS);
+  }
+}
+// --- Clock 4 ---
+void Clock4Task(void *pvParameters)
+{
+  const long interval = 1000;
+  unsigned long previousMillis = 0;
+  char hr_24[3], mn[3], dateStr[3];
+  struct tm timeinfo;
+  const char *dayNames[] = {"SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"};
+
+  for (;;)
+  {
+    unsigned long currentMillis = millis();
+    if (currentMillis - previousMillis >= interval)
+    {
+      previousMillis = currentMillis;
+
+      if (myGetLocalTime(&timeinfo))
+      {
+        _hour24 = timeinfo.tm_hour;
+        _minute = timeinfo.tm_min;
+        _second = timeinfo.tm_sec;
+
+        dmd.selectFont(Font5x7Nbox);
+        _hour12 = _hour24 % 12;
+        if (_hour12 == 0)
+          _hour12 = 12;
+
+        sprintf(hr_24, "%02d", _hour12);
+        dmd.drawString(3, -1, hr_24, 2, GRAPHICS_NORMAL);
+
+        sprintf(mn, "%02d", _minute);
+        dmd.drawString(18, -1, mn, 2, GRAPHICS_NORMAL);
+
+        if (_second % 2 == 0)
+        {
+          dmd.drawFilledBox(15, 1, 16, 2, GRAPHICS_OR);
+          dmd.drawFilledBox(15, 4, 16, 5, GRAPHICS_OR);
+        }
+        else
+        {
+          dmd.drawFilledBox(15, 1, 16, 2, GRAPHICS_NOR);
+          dmd.drawFilledBox(15, 4, 16, 5, GRAPHICS_NOR);
+        }
+
+        dmd.selectFont(System5x7);
+        dmd.drawString(0, 9, dayNames[timeinfo.tm_wday], 3, GRAPHICS_NORMAL);
+
+        dmd.selectFont(Font5x7Nbox);
+        sprintf(dateStr, "%02d", timeinfo.tm_mday);
+        dmd.drawString(20, 8, dateStr, 2, GRAPHICS_NORMAL);
+      }
+    }
+    vTaskDelay(50 / portTICK_PERIOD_MS);
+  }
+}
+
+// --- Clock 5 ---
+void Clock5Task(void *pvParameters)
+{
+  const long interval = 1000;
+  unsigned long previousMillis = 0;
+  char hr_24[3], mn[3], dateStr[3];
+  struct tm timeinfo;
+  const char *dayNames[] = {"SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"};
+
+  for (;;)
+  {
+    unsigned long currentMillis = millis();
+    if (currentMillis - previousMillis >= interval)
+    {
+      previousMillis = currentMillis;
+
+      if (myGetLocalTime(&timeinfo))
+      {
+        _hour24 = timeinfo.tm_hour;
+        _minute = timeinfo.tm_min;
+        _second = timeinfo.tm_sec;
+
+        dmd.selectFont(Font5x7Nbox);
+        _hour12 = _hour24 % 12;
+        if (_hour12 == 0)
+          _hour12 = 12;
+
+        sprintf(hr_24, "%02d", _hour12);
+        dmd.drawString(0, -1, hr_24, 2, GRAPHICS_NORMAL);
+
+        sprintf(mn, "%02d", _minute);
+        dmd.drawString(0, 8, mn, 2, GRAPHICS_NORMAL);
+
+        dmd.selectFont(System5x7);
+        dmd.drawFilledBox(13, 0, 13, 15, GRAPHICS_OR);
+        dmd.drawString(15, 0, dayNames[timeinfo.tm_wday], 3, GRAPHICS_NORMAL);
+
+        dmd.selectFont(Font5x7Nbox);
+        sprintf(dateStr, "%02d", timeinfo.tm_mday);
+        dmd.drawString(18, 8, dateStr, 2, GRAPHICS_NORMAL);
+      }
+    }
+    vTaskDelay(50 / portTICK_PERIOD_MS);
+  }
+}
+// --- Clock 4 ---
+void Clock6Task(void *pvParameters)
+{
+  const long interval = 1000;
+  unsigned long previousMillis = 0;
+  char hr_24[3], mn[3], dateStr[3];
+  struct tm timeinfo;
+
+  // CHANGED: Defined month names instead of day names
+  const char *monthNames[] = {"JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"};
+
+  for (;;)
+  {
+    unsigned long currentMillis = millis();
+    if (currentMillis - previousMillis >= interval)
+    {
+      previousMillis = currentMillis;
+
+      if (myGetLocalTime(&timeinfo))
+      {
+        _hour24 = timeinfo.tm_hour;
+        _minute = timeinfo.tm_min;
+        _second = timeinfo.tm_sec;
+
+        dmd.selectFont(Font5x7Nbox);
+        _hour12 = _hour24 % 12;
+        if (_hour12 == 0)
+          _hour12 = 12;
+
+        sprintf(hr_24, "%02d", _hour12);
+        dmd.drawString(0, -1, hr_24, 2, GRAPHICS_NORMAL);
+
+        sprintf(mn, "%02d", _minute);
+        dmd.drawString(0, 8, mn, 2, GRAPHICS_NORMAL);
+
+        dmd.selectFont(System5x7);
+        dmd.drawFilledBox(13, 0, 13, 15, GRAPHICS_OR);
+
+        // CHANGED: Now printing Month Name based on tm_mon
+        dmd.drawString(15, 0, monthNames[timeinfo.tm_mon], 3, GRAPHICS_NORMAL);
+
+        dmd.selectFont(Font5x7Nbox);
+        sprintf(dateStr, "%02d", timeinfo.tm_mday);
+        dmd.drawString(18, 8, dateStr, 2, GRAPHICS_NORMAL);
+      }
+    }
+    vTaskDelay(50 / portTICK_PERIOD_MS);
+  }
+}
+//...............Clock5...................//
+void Clock7Task(void *pvParameters)
+{
+  const long interval = 1000;      // Update clock every 1 second
+  const long scrollInterval = 100; // Scroll speed (lower is faster)
+
+  unsigned long previousMillis = 0;
+  unsigned long lastScrollMillis = 0;
+
+  // Buffers
+  char hr_24[3], mn[3];
+  char dateScrollBuffer[80]; // Buffer for long date string
+
+  // Scroll Variables
+  int scrollX = 32;    // Start off-screen to the right
+  int textWidth = 0;   // Will be calculated based on the text
+  int currentDay = -1; // To detect date changes
+
+  struct tm timeinfo;
+
+  const char *fullDayNames[] = {
+      "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"};
+  const char *fullMonthNames[] = {
+      "January", "February", "March", "April", "May", "June",
+      "July", "August", "September", "October", "November", "December"};
+
+  for (;;)
+  {
+    unsigned long currentMillis = millis();
+
+    // ============================================================
+    // 1. CLOCK UPDATE (Runs once per second)
+    // ============================================================
+    if (currentMillis - previousMillis >= interval)
+    {
+      previousMillis = currentMillis;
+
+      if (myGetLocalTime(&timeinfo))
+      {
+        // --- Update Time Variables ---
+        _hour24 = timeinfo.tm_hour;
+        _minute = timeinfo.tm_min;
+        _second = timeinfo.tm_sec;
+
+        // --- Prepare Date String (Only once per day) ---
+        if (timeinfo.tm_mday != currentDay)
+        {
+          currentDay = timeinfo.tm_mday;
+
+          // Format: "Friday January 01 2025"
+          sprintf(dateScrollBuffer, "%s %02d-%s %d",
+                  fullDayNames[timeinfo.tm_wday],
+                  timeinfo.tm_mday,
+                  fullMonthNames[timeinfo.tm_mon],
+                  timeinfo.tm_year + 1900);
+
+          // --- MANUAL WIDTH CALCULATION (Fix for missing stringWidth) ---
+          dmd.selectFont(System5x7);
+          textWidth = 0;
+          for (int i = 0; i < strlen(dateScrollBuffer); i++)
+          {
+            // Add width of character + 1 pixel for spacing
+            textWidth += dmd.charWidth(dateScrollBuffer[i]) + 1;
+          }
+        }
+
+        // --- Draw Static Clock (Top Row) ---
+        dmd.selectFont(Font5x7Nbox); // Select Large Font for Clock
+        // dmd.selectFont(System5x7);
+
+        _hour12 = _hour24 % 12;
+        if (_hour12 == 0)
+          _hour12 = 12;
+
+        sprintf(hr_24, "%02d", _hour12);
+        dmd.drawString(3, -1, hr_24, 2, GRAPHICS_NORMAL);
+
+        sprintf(mn, "%02d", _minute);
+        dmd.drawString(18, -1, mn, 2, GRAPHICS_NORMAL);
+
+        // Blinking Colon
+        if (_second % 2 == 0)
+        {
+          dmd.drawFilledBox(15, 1, 16, 2, GRAPHICS_OR);
+          dmd.drawFilledBox(15, 4, 16, 5, GRAPHICS_OR);
+        }
+        else
+        {
+          dmd.drawFilledBox(15, 1, 16, 2, GRAPHICS_NOR); // Erase dots
+          dmd.drawFilledBox(15, 4, 16, 5, GRAPHICS_NOR);
+        }
+      }
+    }
+
+    // ============================================================
+    // 2. SCROLL ANIMATION (Runs every 50ms)
+    // ============================================================
+    if (currentMillis - lastScrollMillis >= scrollInterval)
+    {
+      lastScrollMillis = currentMillis;
+
+      // 1. Clear only the bottom area (Pixels Y=9 to Y=15)
+      // FIX: Changed GRAPHICS_OFF to GRAPHICS_NOR (which erases pixels)
+      dmd.drawFilledBox(0, 9, 31, 15, GRAPHICS_NOR);
+
+      // 2. Update Position
+      scrollX--;
+
+      // If text has gone completely off the left side, reset to right side
+      if (scrollX < -textWidth)
+      {
+        scrollX = 32;
+      }
+
+      // 3. Draw the Text at the new 'scrollX' position
+      dmd.selectFont(System5x7);
+      dmd.drawString(scrollX, 9, dateScrollBuffer, strlen(dateScrollBuffer), GRAPHICS_NORMAL);
+    }
+
+    // Small delay to prevent watchdog crashing
+    vTaskDelay(10 / portTICK_PERIOD_MS);
+  }
+}
+//==============Clock7===============//
+void Clock8Task(void *pvParameters)
+{
+  const long interval = 1000;
+  const long switchInterval = 2000; // Change text every 2 seconds
+
+  unsigned long previousMillis = 0;
+  unsigned long lastSwitchMillis = 0;
+
+  char hr_24[3], mn[3];
+  // We don't need a single global 'bottomBuffer' anymore
+  // because we will create specific buffers inside the states.
+
+  int displayState = 0;
+  struct tm timeinfo;
+
+  const char *dayNames[] = {"SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"};
+  const char *monthNames[] = {"JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"};
+
+  for (;;)
+  {
+    unsigned long currentMillis = millis();
+
+    // ============================================================
+    // 1. CLOCK UPDATE (Top Row)
+    // ============================================================
+    if (currentMillis - previousMillis >= interval)
+    {
+      previousMillis = currentMillis;
+
+      if (myGetLocalTime(&timeinfo))
+      {
+        _hour24 = timeinfo.tm_hour;
+        _minute = timeinfo.tm_min;
+        _second = timeinfo.tm_sec;
+
+        dmd.selectFont(Font5x7Nbox);
+
+        _hour12 = _hour24 % 12;
+        if (_hour12 == 0)
+          _hour12 = 12;
+
+        sprintf(hr_24, "%02d", _hour12);
+        dmd.drawString(3, -1, hr_24, 2, GRAPHICS_NORMAL);
+
+        sprintf(mn, "%02d", _minute);
+        dmd.drawString(18, -1, mn, 2, GRAPHICS_NORMAL);
+
+        if (_second % 2 == 0)
+        {
+          dmd.drawFilledBox(15, 1, 16, 2, GRAPHICS_OR);
+          dmd.drawFilledBox(15, 4, 16, 5, GRAPHICS_OR);
+        }
+        else
+        {
+          dmd.drawFilledBox(15, 1, 16, 2, GRAPHICS_NOR);
+          dmd.drawFilledBox(15, 4, 16, 5, GRAPHICS_NOR);
+        }
+      }
+    }
+
+    // ============================================================
+    // 2. BOTTOM TEXT SWITCHER (Fully Manual Control)
+    // ============================================================
+    if (currentMillis - lastSwitchMillis >= switchInterval)
+    {
+      lastSwitchMillis = currentMillis;
+
+      // 1. Clear the bottom area
+      dmd.drawFilledBox(0, 9, 31, 15, GRAPHICS_NOR);
+
+      dmd.selectFont(System5x7);
+
+      // --------------------------------------------------------
+      // STATE 0: WEEK DAY NAME (e.g., "MON")
+      // --------------------------------------------------------
+      if (displayState == 0)
+      {
+        char weekBuf[5];
+        sprintf(weekBuf, "%s", dayNames[timeinfo.tm_wday]);
+
+        // >>> CONTROL: Set Position for Week Name <<<
+        int x = 8;
+        int y = 9;
+        dmd.drawString(x, y, weekBuf, strlen(weekBuf), GRAPHICS_NORMAL);
+
+        displayState = 1;
+      }
+      // --------------------------------------------------------
+      // STATE 1: DATE and MONTH (Separate but same screen)
+      // --------------------------------------------------------
+      else if (displayState == 1)
+      {
+
+        // --- PART A: Draw Date (e.g., "22") ---
+        char dateBuf[3];
+        sprintf(dateBuf, "%02d", timeinfo.tm_mday);
+
+        // >>> CONTROL: Set Position for Date Number <<<
+        dmd.selectFont(Font5x7Nbox);
+        int dateX = 0;
+        int dateY = 8;
+        dmd.drawString(dateX, dateY, dateBuf, strlen(dateBuf), GRAPHICS_NORMAL);
+
+        // --- PART B: Draw Month (e.g., "DEC") ---
+        char monthBuf[4];
+        sprintf(monthBuf, "%s", monthNames[timeinfo.tm_mon]);
+
+        // >>> CONTROL: Set Position for Month Name <<<
+        dmd.selectFont(System5x7);
+        int monthX = 15;
+        int monthY = 9;
+        dmd.drawString(monthX, monthY, monthBuf, strlen(monthBuf), GRAPHICS_NORMAL);
+
+        displayState = 2;
+      }
+      // --------------------------------------------------------
+      // STATE 2: YEAR (e.g., "2025")
+      // --------------------------------------------------------
+      else
+      {
+        dmd.selectFont(Font5x7Nbox); // Different font for year
+        char yearBuf[5];
+        sprintf(yearBuf, "%d", timeinfo.tm_year + 1900);
+
+        // >>> CONTROL: Set Position for Year <<<
+        int yearX = 4;
+        int yearY = 8;
+        dmd.drawString(yearX, yearY, yearBuf, strlen(yearBuf), GRAPHICS_NORMAL);
+
+        displayState = 0;
+      }
+    }
+
+    vTaskDelay(50 / portTICK_PERIOD_MS);
+  }
+}
