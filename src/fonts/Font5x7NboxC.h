@@ -44,7 +44,7 @@
 #define FONT5X7NBOXC_WIDTH 5
 #define FONT5X7NBOXC_HEIGHT 7
 
-static uint8_t Font5x7NboxC[] PROGMEM = {
+static uint8_t Font5x7NboxC[] PROGMEM __attribute__((unused)) = {
     0x01, 0x6E, // size
     0x05, // width
     0x07, // height

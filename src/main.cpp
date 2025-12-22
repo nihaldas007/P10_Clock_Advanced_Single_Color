@@ -19,6 +19,17 @@ const int PWM_FREQ = 5000;
 const int PWM_RES = 8;
 int brightnessNumber = 5;
 
+// ... existing imports ...
+
+// --- NEW VARIABLES FOR BUTTON & BRIGHTNESS ---
+int brightnessIndex = 0;             // 0=Low, 1=Mid, 2=High
+int brightnessValues[] = {10, 40, 80}; // The 3 levels you requested
+int clickCount = 0;                  // Counts how many times button is clicked
+unsigned long lastClickTime = 0;     // Timer for double click speed
+const int DOUBLE_CLICK_GAP = 400;    // Time (ms) to wait for a second click
+
+// ... existing forward declarations ...
+
 // FreeRTOS task handles
 TaskHandle_t refreshTaskHandle = NULL;
 TaskHandle_t clockTaskHandle = NULL;
@@ -114,23 +125,32 @@ void setup()
   Serial.begin(115200);
   pinMode(TRIGGER_PIN, INPUT_PULLUP);
 
-  // 1. Init Preferences (Storage)
+  // 1. Init Preferences
   preferences.begin("clock-app", false);
-  // Read saved mode, default to 0 if nothing saved
+  
+  // RESTORE MODE
   currentMode = preferences.getInt("mode", 0);
-  Serial.print("Restored Clock Mode: ");
-  Serial.println(currentMode);
+  
+  // RESTORE BRIGHTNESS (NEW)
+  brightnessIndex = preferences.getInt("brightIdx", 0); 
+  // Safety check: ensure index is 0-2
+  if(brightnessIndex < 0 || brightnessIndex > 2) brightnessIndex = 0;
+
+  Serial.print("Restored Mode: "); Serial.println(currentMode);
+  Serial.print("Restored Brightness: "); Serial.println(brightnessValues[brightnessIndex]);
 
   // 2. PWM & Brightness
   pinMode(PANEL_OE, OUTPUT);
   ledcSetup(PWM_CHANNEL, PWM_FREQ, PWM_RES);
   ledcAttachPin(PANEL_OE, PWM_CHANNEL);
-  setBrightness(brightnessNumber);
+  
+  // Apply the restored brightness immediately
+  setBrightness(brightnessValues[brightnessIndex]);
 
-  // 3. Start Display Refresh (Core 0)
+  // 3. Start Display Refresh
   xTaskCreatePinnedToCore(refreshDisplay, "refreshDisplay", 4096, NULL, 10, &refreshTaskHandle, 1);
 
-  // 4. Show "INIT"
+  // 4. Show Init
   dmd.clearScreen(true);
   dmd.selectFont(SystemFont5x7);
   dmd.drawString(4, 4, "INIT", 4, GRAPHICS_NORMAL);
@@ -140,13 +160,11 @@ void setup()
   wm.setAPCallback(configModeCallback);
   wm.setConfigPortalTimeout(180);
 
-  if (!wm.autoConnect("Clock_Setup"))
-  {
+  if (!wm.autoConnect("Clock_Setup")) {
     Serial.println("Failed to connect, restarting...");
     ESP.restart();
   }
 
-  Serial.println("WiFi Connected!");
   dmd.clearScreen(true);
   dmd.drawString(2, 4, "TIME", 4, GRAPHICS_NORMAL);
 
@@ -154,11 +172,7 @@ void setup()
   configTime(gmtOffset_sec, daylightOffset_sec, ntpServer1, ntpServer2, ntpServer3);
   struct tm timeinfo;
   int retry = 0;
-  while (!getLocalTime(&timeinfo, 0) && retry < 10)
-  {
-    dmd.drawString(25, 4, ".", 1, GRAPHICS_NORMAL);
-    delay(500);
-    dmd.drawString(25, 4, " ", 1, GRAPHICS_NORMAL);
+  while (!getLocalTime(&timeinfo, 0) && retry < 10) {
     delay(500);
     retry++;
   }
@@ -167,54 +181,86 @@ void setup()
   changeClockMode(currentMode);
 }
 
-// ------------------- Main Loop -------------------
 void loop()
 {
   static int lastState = HIGH;
   static unsigned long pressStart = 0;
   int currentState = digitalRead(TRIGGER_PIN);
+  unsigned long now = millis();
 
-  // Button Pressed
+  // --- 1. DETECT PRESS ---
   if (lastState == HIGH && currentState == LOW)
   {
-    pressStart = millis();
+    pressStart = now; // Record when button went down
   }
 
-  // Button Released
+  // --- 2. DETECT RELEASE ---
   if (lastState == LOW && currentState == HIGH)
   {
-    unsigned long duration = millis() - pressStart;
+    unsigned long duration = now - pressStart;
 
     if (duration > 3000)
     {
-      // --- LONG PRESS: RESET WIFI ---
+      // === LONG PRESS (Reset WiFi) ===
+      // (Happens immediately on release if held long enough)
       dmd.clearScreen(true);
       dmd.selectFont(SystemFont5x7);
       dmd.drawString(2, 4, "RESET", 5, GRAPHICS_NORMAL);
       Serial.println("Resetting WiFi Settings...");
-
-      if (clockTaskHandle != NULL)
-        vTaskDelete(clockTaskHandle);
-
+      
+      if (clockTaskHandle != NULL) vTaskDelete(clockTaskHandle);
+      
       WiFiManager wm;
       wm.resetSettings();
       delay(1000);
       ESP.restart();
+      
+      clickCount = 0; // Reset any pending clicks
     }
-    else if (duration > 50)
+    else if (duration > 50) 
     {
-      // --- SHORT PRESS: SWITCH CLOCK ---
+      // === SHORT CLICK DETECTED ===
+      // Don't act yet! Just count it.
+      clickCount++;
+      lastClickTime = now;
+    }
+  }
+
+  // --- 3. HANDLE CLICKS AFTER TIMEOUT ---
+  // If we have clicks waiting, and enough time has passed (400ms) 
+  // to ensure the user isn't clicking again:
+  if (clickCount > 0 && (now - lastClickTime > DOUBLE_CLICK_GAP))
+  {
+    if (clickCount == 1)
+    {
+      // === SINGLE CLICK: CHANGE CLOCK MODE ===
       currentMode++;
-      if (currentMode > 7)
-        currentMode = 0;
-
-      // SAVE THE NEW MODE TO MEMORY
-      preferences.putInt("mode", currentMode);
-      Serial.print("Saved New Mode: ");
-      Serial.println(currentMode);
-
+      if (currentMode > 7) currentMode = 0;
+      
+      preferences.putInt("mode", currentMode); // Save Mode
+      Serial.println("Action: Switch Clock Mode");
       changeClockMode(currentMode);
     }
+    else if (clickCount >= 2)
+    {
+      // === DOUBLE CLICK: CHANGE BRIGHTNESS ===
+      brightnessIndex++;
+      if (brightnessIndex > 2) brightnessIndex = 0; // Cycle 0->1->2->0
+      
+      int newLevel = brightnessValues[brightnessIndex]; // Get 5, 50, or 100
+      setBrightness(newLevel);
+      
+      // Save Brightness to Memory
+      preferences.putInt("brightIdx", brightnessIndex); 
+      Serial.print("Action: Brightness Level ");
+      Serial.println(newLevel);
+      
+      // Optional: Visual Feedback on screen
+      // (Flash the brightness level briefly if you want)
+    }
+
+    // Reset count for next time
+    clickCount = 0;
   }
 
   lastState = currentState;

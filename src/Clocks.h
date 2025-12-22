@@ -1,4 +1,6 @@
-#pragma Once
+#pragma once
+
+
 #include <Arduino.h>
 #include <DMD32.h>
 #include <SPI.h>
@@ -115,13 +117,13 @@ void Clock2Task(void *pvParameters)
 
         if (_second % 2 == 0)
         {
-          dmd.drawFilledBox(15, 4, 16, 5, GRAPHICS_OR);
-          dmd.drawFilledBox(15, 10, 16, 11, GRAPHICS_OR);
+          dmd.drawFilledBox(15, 2, 16, 3, GRAPHICS_OR);
+          dmd.drawFilledBox(15, 12, 16, 13, GRAPHICS_OR);
         }
         else
         {
-          dmd.drawFilledBox(15, 4, 16, 5, GRAPHICS_NOR);
-          dmd.drawFilledBox(15, 10, 16, 11, GRAPHICS_NOR);
+          dmd.drawFilledBox(15, 2, 16, 3, GRAPHICS_NOR);
+          dmd.drawFilledBox(15, 12, 16, 13, GRAPHICS_NOR);
         }
       }
     }
@@ -131,8 +133,6 @@ void Clock2Task(void *pvParameters)
 
 void Clock3Task(void *pvParameters)
 {
-  const long interval = 1000;
-  unsigned long previousMillis = 0;
   
   char hr_24[3], mn[3];
   char tens_str[2], units_str[2];
@@ -149,7 +149,6 @@ void Clock3Task(void *pvParameters)
 
   for (;;)
   {
-    unsigned long currentMillis = millis();
     
     if (myGetLocalTime(&timeinfo))
     {
