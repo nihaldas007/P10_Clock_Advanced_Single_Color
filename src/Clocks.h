@@ -134,19 +134,18 @@ void Clock3Task(void *pvParameters)
   const long interval = 1000;
   unsigned long previousMillis = 0;
   
-  // Buffers
   char hr_24[3], mn[3];
-  char tens_str[2], units_str[2]; // Buffers for single digits
+  char tens_str[2], units_str[2];
   
   struct tm timeinfo;
   int last_second = -1; 
 
-  // --- Animation Settings ---
-  const int fontHeight = 12; // Height of Font12x6
-  const int secX_Tens = 18;  // X position of left digit
-  const int secX_Units = 25; // X position of right digit (Adjust based on font width)
-  const int secY = 2;        // Target Y position
-  const int gap = 2;         // Gap between sliding numbers
+  // --- Configuration ---
+  const int fontHeight = 12; 
+  const int secX_Tens = 18;  
+  const int secX_Units = 25; 
+  const int secY = 2;        
+  const int gap = 2;         
 
   for (;;)
   {
@@ -161,67 +160,73 @@ void Clock3Task(void *pvParameters)
           _hour24 = timeinfo.tm_hour;
           _minute = timeinfo.tm_min;
 
-          // Prepare Hour/Minute Strings
+          // 1. PREPARE STRINGS
           dmd.selectFont(Font5x7Nbox);
           _hour12 = _hour24 % 12;
           if (_hour12 == 0) _hour12 = 12;
           sprintf(hr_24, "%02d", _hour12);
           sprintf(mn, "%02d", _minute);
 
-          // Split Seconds into Digits
+          // 2. DRAW STATIC PART (Hours, Mins, Dots) ONE TIME
+          // We do this OUTSIDE the loop to stop flickering
+          dmd.drawString(3, -1, hr_24, 2, GRAPHICS_NORMAL);
+          dmd.drawString(3, 8, mn, 2, GRAPHICS_NORMAL);
+          dmd.drawFilledBox(15, 4, 16, 5, GRAPHICS_OR);
+          dmd.drawFilledBox(15, 10, 16, 11, GRAPHICS_OR);
+
+          // 3. CALCULATE DIGITS
           int new_tens = _second / 10;
           int new_units = _second % 10;
           
           int old_tens = (last_second == -1) ? new_tens : last_second / 10;
           int old_units = (last_second == -1) ? new_units : last_second % 10;
 
+          // 4. DETERMINE ANIMATION AREA
+          // If the Left digit (Tens) is the same, we draw it ONCE and don't touch it again.
+          // We start clearing/animating only from the Right digit (Units).
+          
+          int clearStart_X; 
+
+          dmd.selectFont(Font12x6);
+
+          if (new_tens == old_tens) {
+             // Tens didn't change: Draw it static NOW
+             sprintf(tens_str, "%d", new_tens);
+             dmd.drawString(secX_Tens, secY, tens_str, 1, GRAPHICS_NORMAL); // Use NORMAL to ensure it overwrites cleanly
+             
+             // Only animate the right side
+             clearStart_X = secX_Units; 
+          } else {
+             // Tens changed: We must animate from the left side
+             clearStart_X = secX_Tens;
+          }
+
           // --- ANIMATION LOOP ---
           for (int i = 0; i <= fontHeight + gap; i++) 
           {
-            // 1. Draw Static Elements (Hours/Mins)
-            dmd.selectFont(Font5x7NboxC);
-            dmd.drawString(3, -1, hr_24, 2, GRAPHICS_NORMAL);
-            dmd.drawString(3, 8, mn, 2, GRAPHICS_NORMAL);
-            dmd.drawFilledBox(15, 4, 16, 5, GRAPHICS_OR);
-            dmd.drawFilledBox(15, 10, 16, 11, GRAPHICS_OR);
-
-            // 2. Clear Seconds Area
-            // Clears from X=18 to X=31
-            dmd.drawFilledBox(secX_Tens, 0, 31, 15, GRAPHICS_NOR); 
+            // A. Clear ONLY the area that is moving
+            // If tens are static, this only clears X=25 to 31. The '0' at X=18 is safe.
+            dmd.drawFilledBox(clearStart_X, 0, 31, 15, GRAPHICS_NOR); 
 
             dmd.selectFont(Font12x6);
 
-            // --- DRAW LEFT DIGIT (TENS) ---
-            if (new_tens == old_tens) {
-               // Digit didn't change: Draw static
-               sprintf(tens_str, "%d", new_tens);
-               dmd.drawString(secX_Tens, secY, tens_str, 1, GRAPHICS_OR);
-            } else {
-               // Digit changed: Animate
-               // Old moving Up
+            // B. Animate TENS (Only if changed)
+            if (new_tens != old_tens) {
                sprintf(tens_str, "%d", old_tens);
                dmd.drawString(secX_Tens, secY - i, tens_str, 1, GRAPHICS_OR);
-               // New moving In
+               
                sprintf(tens_str, "%d", new_tens);
                dmd.drawString(secX_Tens, (secY + fontHeight + gap) - i, tens_str, 1, GRAPHICS_OR);
             }
 
-            // --- DRAW RIGHT DIGIT (UNITS) ---
-            if (new_units == old_units) {
-               // Rare, but handles startup or specialized cases
-               sprintf(units_str, "%d", new_units);
-               dmd.drawString(secX_Units, secY, units_str, 1, GRAPHICS_OR);
-            } else {
-               // Digit changed: Animate
-               // Old moving Up
-               sprintf(units_str, "%d", old_units);
-               dmd.drawString(secX_Units, secY - i, units_str, 1, GRAPHICS_OR);
-               // New moving In
-               sprintf(units_str, "%d", new_units);
-               dmd.drawString(secX_Units, (secY + fontHeight + gap) - i, units_str, 1, GRAPHICS_OR);
-            }
+            // C. Animate UNITS (Always animate)
+            sprintf(units_str, "%d", old_units);
+            dmd.drawString(secX_Units, secY - i, units_str, 1, GRAPHICS_OR);
+            
+            sprintf(units_str, "%d", new_units);
+            dmd.drawString(secX_Units, (secY + fontHeight + gap) - i, units_str, 1, GRAPHICS_OR);
 
-            vTaskDelay(30 / portTICK_PERIOD_MS); // Animation Speed
+            vTaskDelay(20 / portTICK_PERIOD_MS); // Slightly faster to look smoother
           }
 
           last_second = _second;
