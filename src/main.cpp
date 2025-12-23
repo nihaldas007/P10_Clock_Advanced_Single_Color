@@ -51,7 +51,7 @@ void refreshDisplay(void *pvParameters)
   {
     dmd.scanDisplayBySPI();
 
-    vTaskDelay(2 / portTICK_PERIOD_MS);
+    vTaskDelay(1 / portTICK_PERIOD_MS);
     // taskYIELD();
   }
 }

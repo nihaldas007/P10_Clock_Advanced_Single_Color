@@ -60,7 +60,7 @@ LED Panel Layout in RAM
 // ######################################################################################################################
 // ######################################################################################################################
 
-// //DMD I/O pin macros
+// //DMD I/O pin macros Old system
 // #define LIGHT_DMD_ROW_01_05_09_13()       	{ digitalWrite( PIN_DMD_B,  LOW ); digitalWrite( PIN_DMD_A,  LOW ); }
 // #define LIGHT_DMD_ROW_02_06_10_14()       	{ digitalWrite( PIN_DMD_B,  LOW ); digitalWrite( PIN_DMD_A, HIGH ); }
 // #define LIGHT_DMD_ROW_03_07_11_15()       	{ digitalWrite( PIN_DMD_B, HIGH ); digitalWrite( PIN_DMD_A,  LOW ); }
@@ -74,13 +74,20 @@ LED Panel Layout in RAM
 // Pre-calculate bitmasks (Optional, but cleaner if your PINs are variables)
 // If your PINs are #defines, the compiler will optimize the (1 << PIN) automatically.
 
+// DMD I/O pin macros New system
 #define LIGHT_DMD_ROW_01_05_09_13()     { GPIO.out_w1tc = (1 << PIN_DMD_B); GPIO.out_w1tc = (1 << PIN_DMD_A); }
 #define LIGHT_DMD_ROW_02_06_10_14()     { GPIO.out_w1tc = (1 << PIN_DMD_B); GPIO.out_w1ts = (1 << PIN_DMD_A); }
 #define LIGHT_DMD_ROW_03_07_11_15()     { GPIO.out_w1ts = (1 << PIN_DMD_B); GPIO.out_w1tc = (1 << PIN_DMD_A); }
 #define LIGHT_DMD_ROW_04_08_12_16()     { GPIO.out_w1ts = (1 << PIN_DMD_B); GPIO.out_w1ts = (1 << PIN_DMD_A); }
 
 // Latch needs a quick High-Low pulse
-#define LATCH_DMD_SHIFT_REG_TO_OUTPUT() { GPIO.out_w1ts = (1 << PIN_DMD_SCLK); GPIO.out_w1tc = (1 << PIN_DMD_SCLK); }
+// #define LATCH_DMD_SHIFT_REG_TO_OUTPUT() { GPIO.out_w1ts = (1 << PIN_DMD_SCLK); GPIO.out_w1tc = (1 << PIN_DMD_SCLK); }
+
+#define LATCH_DMD_SHIFT_REG_TO_OUTPUT() { \
+    GPIO.out_w1ts = (1 << PIN_DMD_SCLK); \
+    asm("nop"); asm("nop"); \
+    GPIO.out_w1tc = (1 << PIN_DMD_SCLK); \
+}
 
 // OE (Output Enable) usually active LOW for P10 panels (LOW = ON, HIGH = OFF)
 // Your original code had: OFF = LOW, ON = HIGH. I have kept YOUR logic below:
