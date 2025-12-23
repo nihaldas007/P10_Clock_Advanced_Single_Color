@@ -130,10 +130,8 @@ void Clock2Task(void *pvParameters)
     vTaskDelay(50 / portTICK_PERIOD_MS);
   }
 }
-
 void Clock3Task(void *pvParameters)
 {
-  
   char hr_24[3], mn[3];
   char tens_str[2], units_str[2];
   
@@ -149,7 +147,6 @@ void Clock3Task(void *pvParameters)
 
   for (;;)
   {
-    
     if (myGetLocalTime(&timeinfo))
     {
        _second = timeinfo.tm_sec;
@@ -166,8 +163,7 @@ void Clock3Task(void *pvParameters)
           sprintf(hr_24, "%02d", _hour12);
           sprintf(mn, "%02d", _minute);
 
-          // 2. DRAW STATIC PART (Hours, Mins, Dots) ONE TIME
-          // We do this OUTSIDE the loop to stop flickering
+          // 2. DRAW STATIC PART
           dmd.drawString(3, -1, hr_24, 2, GRAPHICS_NORMAL);
           dmd.drawString(3, 8, mn, 2, GRAPHICS_NORMAL);
           dmd.drawFilledBox(15, 4, 16, 5, GRAPHICS_OR);
@@ -181,9 +177,6 @@ void Clock3Task(void *pvParameters)
           int old_units = (last_second == -1) ? new_units : last_second % 10;
 
           // 4. DETERMINE ANIMATION AREA
-          // If the Left digit (Tens) is the same, we draw it ONCE and don't touch it again.
-          // We start clearing/animating only from the Right digit (Units).
-          
           int clearStart_X; 
 
           dmd.selectFont(Font12x6);
@@ -191,20 +184,16 @@ void Clock3Task(void *pvParameters)
           if (new_tens == old_tens) {
              // Tens didn't change: Draw it static NOW
              sprintf(tens_str, "%d", new_tens);
-             dmd.drawString(secX_Tens, secY, tens_str, 1, GRAPHICS_NORMAL); // Use NORMAL to ensure it overwrites cleanly
-             
-             // Only animate the right side
+             dmd.drawString(secX_Tens, secY, tens_str, 1, GRAPHICS_NORMAL);
              clearStart_X = secX_Units; 
           } else {
-             // Tens changed: We must animate from the left side
              clearStart_X = secX_Tens;
           }
 
           // --- ANIMATION LOOP ---
+          // 15 steps * 60ms = 900ms Total Duration
           for (int i = 0; i <= fontHeight + gap; i++) 
           {
-            // A. Clear ONLY the area that is moving
-            // If tens are static, this only clears X=25 to 31. The '0' at X=18 is safe.
             dmd.drawFilledBox(clearStart_X, 0, 31, 15, GRAPHICS_NOR); 
 
             dmd.selectFont(Font12x6);
@@ -225,13 +214,16 @@ void Clock3Task(void *pvParameters)
             sprintf(units_str, "%d", new_units);
             dmd.drawString(secX_Units, (secY + fontHeight + gap) - i, units_str, 1, GRAPHICS_OR);
 
-            vTaskDelay(20 / portTICK_PERIOD_MS); // Slightly faster to look smoother
+            // >>> UPDATED DELAY HERE <<<
+            // Increased to 60ms to make animation take ~0.9 seconds total
+            vTaskDelay(60 / portTICK_PERIOD_MS); 
           }
 
           last_second = _second;
        }
     }
-    vTaskDelay(50 / portTICK_PERIOD_MS);
+    // Reduced outer delay slightly to ensure we catch the next second immediately after animation
+    vTaskDelay(1 / portTICK_PERIOD_MS);
   }
 }
 // --- Clock 4 ---

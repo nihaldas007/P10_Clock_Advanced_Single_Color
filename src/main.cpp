@@ -15,7 +15,7 @@ Preferences preferences; // NEW: Create preferences object
 // Panel OE / Brightness
 const int PANEL_OE = 4;
 const int PWM_CHANNEL = 0;
-const int PWM_FREQ = 5000;
+const int PWM_FREQ = 8000;
 const int PWM_RES = 8;
 int brightnessNumber = 5;
 
@@ -50,7 +50,9 @@ void refreshDisplay(void *pvParameters)
   for (;;)
   {
     dmd.scanDisplayBySPI();
-    vTaskDelay(1 / portTICK_PERIOD_MS);
+
+    vTaskDelay(2 / portTICK_PERIOD_MS);
+    // taskYIELD();
   }
 }
 
@@ -148,7 +150,7 @@ void setup()
   setBrightness(brightnessValues[brightnessIndex]);
 
   // 3. Start Display Refresh
-  xTaskCreatePinnedToCore(refreshDisplay, "refreshDisplay", 4096, NULL, 10, &refreshTaskHandle, 1);
+  xTaskCreatePinnedToCore(refreshDisplay, "refreshDisplay", 4096, NULL, 20, &refreshTaskHandle, 1);
 
   // 4. Show Init
   dmd.clearScreen(true);

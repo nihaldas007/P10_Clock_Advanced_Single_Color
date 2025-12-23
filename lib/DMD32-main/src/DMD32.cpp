@@ -469,6 +469,8 @@ void DMD::scanDisplayBySPI()
     }
 }
 
+
+
 void DMD::selectFont(const uint8_t * font)
 {
     this->Font = font;
