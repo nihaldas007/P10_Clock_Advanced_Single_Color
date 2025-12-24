@@ -12,6 +12,9 @@
 #include "fonts/Font5x7Nbox.h"
 #include "fonts/Font5x7NboxC.h"
 #include "fonts/Font6x16.h"
+#include "fonts/SystemFont3x5.h"
+#include "fonts/Font5x10Nbox.h"
+#include "fonts/Font5x10Sbox.h"
 // ================================================================
 //                        CLOCK TASKS
 // ================================================================
@@ -37,54 +40,8 @@ bool myGetLocalTime(struct tm *timeinfo)
   return getLocalTime(timeinfo, 100);
 }
 // --- Clock 1 ---
+
 void Clock1Task(void *pvParameters)
-{
-  const long interval = 1000;
-  unsigned long previousMillis = 0;
-  char hr_24[3], mn[3];
-  struct tm timeinfo;
-
-  for (;;)
-  {
-    unsigned long currentMillis = millis();
-    if (currentMillis - previousMillis >= interval)
-    {
-      previousMillis = currentMillis;
-
-      if (myGetLocalTime(&timeinfo))
-      {
-        _hour24 = timeinfo.tm_hour;
-        _minute = timeinfo.tm_min;
-        _second = timeinfo.tm_sec;
-
-        dmd.selectFont(Font12x6);
-        _hour12 = _hour24 % 12;
-        if (_hour12 == 0)
-          _hour12 = 12;
-
-        sprintf(hr_24, "%02d", _hour12);
-        dmd.drawString(1, 2, hr_24, 2, GRAPHICS_NORMAL);
-
-        sprintf(mn, "%02d", _minute);
-        dmd.drawString(18, 2, mn, 2, GRAPHICS_NORMAL);
-
-        if (_second % 2 == 0)
-        {
-          dmd.drawFilledBox(15, 4, 16, 5, GRAPHICS_OR);
-          dmd.drawFilledBox(15, 10, 16, 11, GRAPHICS_OR);
-        }
-        else
-        {
-          dmd.drawFilledBox(15, 4, 16, 5, GRAPHICS_NOR);
-          dmd.drawFilledBox(15, 10, 16, 11, GRAPHICS_NOR);
-        }
-      }
-    }
-    vTaskDelay(50 / portTICK_PERIOD_MS);
-  }
-}
-// --- Clock 2 ---
-void Clock2Task(void *pvParameters)
 {
   const long interval = 1000;
   unsigned long previousMillis = 0;
@@ -130,6 +87,54 @@ void Clock2Task(void *pvParameters)
     vTaskDelay(50 / portTICK_PERIOD_MS);
   }
 }
+// --- Clock 2 ---
+void Clock2Task(void *pvParameters)
+{
+  const long interval = 1000;
+  unsigned long previousMillis = 0;
+  char hr_24[3], mn[3];
+  struct tm timeinfo;
+
+  for (;;)
+  {
+    unsigned long currentMillis = millis();
+    if (currentMillis - previousMillis >= interval)
+    {
+      previousMillis = currentMillis;
+
+      if (myGetLocalTime(&timeinfo))
+      {
+        _hour24 = timeinfo.tm_hour;
+        _minute = timeinfo.tm_min;
+        _second = timeinfo.tm_sec;
+
+        dmd.selectFont(Font12x6);
+        _hour12 = _hour24 % 12;
+        if (_hour12 == 0)
+          _hour12 = 12;
+
+        sprintf(hr_24, "%02d", _hour12);
+        dmd.drawString(1, 2, hr_24, 2, GRAPHICS_NORMAL);
+
+        sprintf(mn, "%02d", _minute);
+        dmd.drawString(18, 2, mn, 2, GRAPHICS_NORMAL);
+
+        if (_second % 2 == 0)
+        {
+          dmd.drawFilledBox(15, 4, 16, 5, GRAPHICS_OR);
+          dmd.drawFilledBox(15, 10, 16, 11, GRAPHICS_OR);
+        }
+        else
+        {
+          dmd.drawFilledBox(15, 4, 16, 5, GRAPHICS_NOR);
+          dmd.drawFilledBox(15, 10, 16, 11, GRAPHICS_NOR);
+        }
+      }
+    }
+    vTaskDelay(50 / portTICK_PERIOD_MS);
+  }
+}
+
 void Clock3Task(void *pvParameters)
 {
   char hr_24[3], mn[3];
@@ -282,12 +287,11 @@ void Clock4Task(void *pvParameters)
   }
 }
 
-// --- Clock 5 ---
 void Clock5Task(void *pvParameters)
 {
   const long interval = 1000;
   unsigned long previousMillis = 0;
-  char hr_24[3], mn[3], dateStr[3];
+  char hr_24[3], mn[3], date[3], month[3]; 
   struct tm timeinfo;
   const char *dayNames[] = {"SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"};
 
@@ -304,30 +308,60 @@ void Clock5Task(void *pvParameters)
         _minute = timeinfo.tm_min;
         _second = timeinfo.tm_sec;
 
-        dmd.selectFont(Font5x7Nbox);
+        // --- TOP ROW: TIME ---
+        dmd.selectFont(Font5x10Nbox); // Large font for numbers
         _hour12 = _hour24 % 12;
         if (_hour12 == 0)
           _hour12 = 12;
 
         sprintf(hr_24, "%02d", _hour12);
-        dmd.drawString(0, -1, hr_24, 2, GRAPHICS_NORMAL);
+        dmd.drawString(0, 0, hr_24, 2, GRAPHICS_NORMAL);
 
         sprintf(mn, "%02d", _minute);
-        dmd.drawString(0, 8, mn, 2, GRAPHICS_NORMAL);
+        dmd.drawString(15, 0, mn, 2, GRAPHICS_NORMAL);
 
-        dmd.selectFont(System5x7);
-        dmd.drawFilledBox(13, 0, 13, 15, GRAPHICS_OR);
-        dmd.drawString(15, 0, dayNames[timeinfo.tm_wday], 3, GRAPHICS_NORMAL);
+        // --- AM/PM ADDITION ---
+        // We switch to the smaller font to fit 'A' or 'P' on the edge (x=28)
+        dmd.selectFont(SystemFont3x5); 
+        if (_hour24 >= 12) {
+            dmd.drawString(27, 3, "P", 1, GRAPHICS_NORMAL); // Draw 'P' at bottom-right of numbers
+        } else {
+            dmd.drawString(28, 3, "A", 1, GRAPHICS_NORMAL); // Draw 'A'
+        }
 
-        dmd.selectFont(Font5x7Nbox);
-        sprintf(dateStr, "%02d", timeinfo.tm_mday);
-        dmd.drawString(18, 8, dateStr, 2, GRAPHICS_NORMAL);
+        // --- BLINKING COLON ---
+        // Switch logic back to fill boxes (Graphics mode doesn't depend on font, but good to keep organized)
+        if (_second % 2 == 0)
+        {
+          dmd.drawFilledBox(12, 1, 13, 2, GRAPHICS_OR);
+          dmd.drawFilledBox(12, 7, 13, 8, GRAPHICS_OR);
+        }
+        else
+        {
+          dmd.drawFilledBox(12, 1, 13, 2, GRAPHICS_NOR);
+          dmd.drawFilledBox(12, 7, 13, 8, GRAPHICS_NOR);
+        }
+
+        // --- BOTTOM ROW: DATE.MONTH & WEEKDAY ---
+        dmd.selectFont(SystemFont3x5); // Ensure small font is selected for date
+
+        // 1. Format Date as DD.MM
+        sprintf(date, "%02d", timeinfo.tm_mday);
+        dmd.drawString(0, 11, date, 3, GRAPHICS_NORMAL);
+        
+        dmd.drawFilledBox(8, 15, 8, 15, GRAPHICS_OR); // The dot
+        
+        sprintf(month, "%02d", timeinfo.tm_mon + 1);
+        dmd.drawString(10, 11, month, 3, GRAPHICS_NORMAL);
+
+        // 2. Draw Week Day Name
+        dmd.drawString(21, 11, dayNames[timeinfo.tm_wday], 3, GRAPHICS_NORMAL);
       }
     }
     vTaskDelay(50 / portTICK_PERIOD_MS);
   }
 }
-// --- Clock 4 ---
+// --- Clock 6 ---
 void Clock6Task(void *pvParameters)
 {
   const long interval = 1000;
@@ -376,7 +410,7 @@ void Clock6Task(void *pvParameters)
     vTaskDelay(50 / portTICK_PERIOD_MS);
   }
 }
-//...............Clock5...................//
+//...............Clock7...................//
 void Clock7Task(void *pvParameters)
 {
   const long interval = 1000;      // Update clock every 1 second

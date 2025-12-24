@@ -17,13 +17,12 @@ const int PANEL_OE = 4;
 const int PWM_CHANNEL = 0;
 const int PWM_FREQ = 8000;
 const int PWM_RES = 8;
-int brightnessNumber = 5;
 
 // ... existing imports ...
 
 // --- NEW VARIABLES FOR BUTTON & BRIGHTNESS ---
 int brightnessIndex = 0;             // 0=Low, 1=Mid, 2=High
-int brightnessValues[] = {10, 40, 80}; // The 3 levels you requested
+int brightnessValues[] = {5, 30, 50}; // The 3 levels you requested
 int clickCount = 0;                  // Counts how many times button is clicked
 unsigned long lastClickTime = 0;     // Timer for double click speed
 const int DOUBLE_CLICK_GAP = 400;    // Time (ms) to wait for a second click
