@@ -35,7 +35,6 @@ Modified by: Khudhur Alfarhan  // Qudoren@gmail.com
 DMD::DMD(byte panelsWide, byte panelsHigh)
 {
 
-    uint16_t ui;
     DisplaysWide = panelsWide;
     DisplaysHigh = panelsHigh;
     DisplaysTotal = DisplaysWide * DisplaysHigh;
