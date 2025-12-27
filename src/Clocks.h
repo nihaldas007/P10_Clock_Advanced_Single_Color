@@ -1,10 +1,10 @@
 #pragma once
 
-
 #include <Arduino.h>
 #include <DMD32.h>
 #include <SPI.h>
 #include <time.h>
+#include <RTClib.h>
 
 // Fonts
 #include "fonts/SystemFont5x7.h"
@@ -19,6 +19,7 @@
 //                        CLOCK TASKS
 // ================================================================
 DMD dmd(1, 1);
+RTC_DS3231 rtc;
 
 // Variables
 int _hour12, _hour24, _minute, _second;
@@ -46,7 +47,6 @@ void Clock1Task(void *pvParameters)
   const long interval = 1000;
   unsigned long previousMillis = 0;
   char hr_24[3], mn[3];
-  struct tm timeinfo;
 
   for (;;)
   {
@@ -55,33 +55,31 @@ void Clock1Task(void *pvParameters)
     {
       previousMillis = currentMillis;
 
-      if (myGetLocalTime(&timeinfo))
+      DateTime now = rtc.now();
+      _hour24 = now.hour();
+      _minute = now.minute();
+      _second = now.second();
+
+      dmd.selectFont(Font6x16);
+      _hour12 = _hour24 % 12;
+      if (_hour12 == 0)
+        _hour12 = 12;
+
+      sprintf(hr_24, "%02d", _hour12);
+      dmd.drawString(1, 0, hr_24, 2, GRAPHICS_NORMAL);
+
+      sprintf(mn, "%02d", _minute);
+      dmd.drawString(18, 0, mn, 2, GRAPHICS_NORMAL);
+
+      if (_second % 2 == 0)
       {
-        _hour24 = timeinfo.tm_hour;
-        _minute = timeinfo.tm_min;
-        _second = timeinfo.tm_sec;
-
-        dmd.selectFont(Font6x16);
-        _hour12 = _hour24 % 12;
-        if (_hour12 == 0)
-          _hour12 = 12;
-
-        sprintf(hr_24, "%02d", _hour12);
-        dmd.drawString(1, 0, hr_24, 2, GRAPHICS_NORMAL);
-
-        sprintf(mn, "%02d", _minute);
-        dmd.drawString(18, 0, mn, 2, GRAPHICS_NORMAL);
-
-        if (_second % 2 == 0)
-        {
-          dmd.drawFilledBox(15, 2, 16, 3, GRAPHICS_OR);
-          dmd.drawFilledBox(15, 12, 16, 13, GRAPHICS_OR);
-        }
-        else
-        {
-          dmd.drawFilledBox(15, 2, 16, 3, GRAPHICS_NOR);
-          dmd.drawFilledBox(15, 12, 16, 13, GRAPHICS_NOR);
-        }
+        dmd.drawFilledBox(15, 2, 16, 3, GRAPHICS_OR);
+        dmd.drawFilledBox(15, 12, 16, 13, GRAPHICS_OR);
+      }
+      else
+      {
+        dmd.drawFilledBox(15, 2, 16, 3, GRAPHICS_NOR);
+        dmd.drawFilledBox(15, 12, 16, 13, GRAPHICS_NOR);
       }
     }
     vTaskDelay(50 / portTICK_PERIOD_MS);
@@ -93,7 +91,6 @@ void Clock2Task(void *pvParameters)
   const long interval = 1000;
   unsigned long previousMillis = 0;
   char hr_24[3], mn[3];
-  struct tm timeinfo;
 
   for (;;)
   {
@@ -102,33 +99,32 @@ void Clock2Task(void *pvParameters)
     {
       previousMillis = currentMillis;
 
-      if (myGetLocalTime(&timeinfo))
+      DateTime now = rtc.now();
+      _hour24 = now.hour();
+      _minute = now.minute();
+      _second = now.second();
+
+      dmd.selectFont(Font12x6);
+
+      _hour12 = _hour24 % 12;
+      if (_hour12 == 0)
+        _hour12 = 12;
+
+      sprintf(hr_24, "%02d", _hour12);
+      dmd.drawString(1, 2, hr_24, 2, GRAPHICS_NORMAL);
+
+      sprintf(mn, "%02d", _minute);
+      dmd.drawString(18, 2, mn, 2, GRAPHICS_NORMAL);
+
+      if (_second % 2 == 0)
       {
-        _hour24 = timeinfo.tm_hour;
-        _minute = timeinfo.tm_min;
-        _second = timeinfo.tm_sec;
-
-        dmd.selectFont(Font12x6);
-        _hour12 = _hour24 % 12;
-        if (_hour12 == 0)
-          _hour12 = 12;
-
-        sprintf(hr_24, "%02d", _hour12);
-        dmd.drawString(1, 2, hr_24, 2, GRAPHICS_NORMAL);
-
-        sprintf(mn, "%02d", _minute);
-        dmd.drawString(18, 2, mn, 2, GRAPHICS_NORMAL);
-
-        if (_second % 2 == 0)
-        {
-          dmd.drawFilledBox(15, 4, 16, 5, GRAPHICS_OR);
-          dmd.drawFilledBox(15, 10, 16, 11, GRAPHICS_OR);
-        }
-        else
-        {
-          dmd.drawFilledBox(15, 4, 16, 5, GRAPHICS_NOR);
-          dmd.drawFilledBox(15, 10, 16, 11, GRAPHICS_NOR);
-        }
+        dmd.drawFilledBox(15, 4, 16, 5, GRAPHICS_OR);
+        dmd.drawFilledBox(15, 10, 16, 11, GRAPHICS_OR);
+      }
+      else
+      {
+        dmd.drawFilledBox(15, 4, 16, 5, GRAPHICS_NOR);
+        dmd.drawFilledBox(15, 10, 16, 11, GRAPHICS_NOR);
       }
     }
     vTaskDelay(50 / portTICK_PERIOD_MS);
@@ -139,93 +135,95 @@ void Clock3Task(void *pvParameters)
 {
   char hr_24[3], mn[3];
   char tens_str[2], units_str[2];
-  
-  struct tm timeinfo;
-  int last_second = -1; 
+
+  int last_second = -1;
 
   // --- Configuration ---
-  const int fontHeight = 12; 
-  const int secX_Tens = 18;  
-  const int secX_Units = 25; 
-  const int secY = 2;        
-  const int gap = 2;         
+  const int fontHeight = 12;
+  const int secX_Tens = 18;
+  const int secX_Units = 25;
+  const int secY = 2;
+  const int gap = 2;
 
   for (;;)
   {
-    if (myGetLocalTime(&timeinfo))
+    DateTime now = rtc.now();
+    _second = now.second();
+
+    if (_second != last_second)
     {
-       _second = timeinfo.tm_sec;
+      _hour24 = now.hour();
+      _minute = now.minute();
 
-       if (_second != last_second) 
-       {
-          _hour24 = timeinfo.tm_hour;
-          _minute = timeinfo.tm_min;
+      // 1. PREPARE STRINGS
+      dmd.selectFont(Font5x7Nbox);
+      _hour12 = _hour24 % 12;
+      if (_hour12 == 0)
+        _hour12 = 12;
+      sprintf(hr_24, "%02d", _hour12);
+      sprintf(mn, "%02d", _minute);
 
-          // 1. PREPARE STRINGS
-          dmd.selectFont(Font5x7Nbox);
-          _hour12 = _hour24 % 12;
-          if (_hour12 == 0) _hour12 = 12;
-          sprintf(hr_24, "%02d", _hour12);
-          sprintf(mn, "%02d", _minute);
+      // 2. DRAW STATIC PART
+      dmd.drawString(3, -1, hr_24, 2, GRAPHICS_NORMAL);
+      dmd.drawString(3, 8, mn, 2, GRAPHICS_NORMAL);
+      dmd.drawFilledBox(15, 4, 16, 5, GRAPHICS_OR);
+      dmd.drawFilledBox(15, 10, 16, 11, GRAPHICS_OR);
 
-          // 2. DRAW STATIC PART
-          dmd.drawString(3, -1, hr_24, 2, GRAPHICS_NORMAL);
-          dmd.drawString(3, 8, mn, 2, GRAPHICS_NORMAL);
-          dmd.drawFilledBox(15, 4, 16, 5, GRAPHICS_OR);
-          dmd.drawFilledBox(15, 10, 16, 11, GRAPHICS_OR);
+      // 3. CALCULATE DIGITS
+      int new_tens = _second / 10;
+      int new_units = _second % 10;
 
-          // 3. CALCULATE DIGITS
-          int new_tens = _second / 10;
-          int new_units = _second % 10;
-          
-          int old_tens = (last_second == -1) ? new_tens : last_second / 10;
-          int old_units = (last_second == -1) ? new_units : last_second % 10;
+      int old_tens = (last_second == -1) ? new_tens : last_second / 10;
+      int old_units = (last_second == -1) ? new_units : last_second % 10;
 
-          // 4. DETERMINE ANIMATION AREA
-          int clearStart_X; 
+      // 4. DETERMINE ANIMATION AREA
+      int clearStart_X;
 
-          dmd.selectFont(Font12x6);
+      dmd.selectFont(Font12x6);
 
-          if (new_tens == old_tens) {
-             // Tens didn't change: Draw it static NOW
-             sprintf(tens_str, "%d", new_tens);
-             dmd.drawString(secX_Tens, secY, tens_str, 1, GRAPHICS_NORMAL);
-             clearStart_X = secX_Units; 
-          } else {
-             clearStart_X = secX_Tens;
-          }
+      if (new_tens == old_tens)
+      {
+        // Tens didn't change: Draw it static NOW
+        sprintf(tens_str, "%d", new_tens);
+        dmd.drawString(secX_Tens, secY, tens_str, 1, GRAPHICS_NORMAL);
+        clearStart_X = secX_Units;
+      }
+      else
+      {
+        clearStart_X = secX_Tens;
+      }
 
-          // --- ANIMATION LOOP ---
-          // 15 steps * 60ms = 900ms Total Duration
-          for (int i = 0; i <= fontHeight + gap; i++) 
-          {
-            dmd.drawFilledBox(clearStart_X, 0, 31, 15, GRAPHICS_NOR); 
+      // --- ANIMATION LOOP ---
+      // 15 steps * 60ms = 900ms Total Duration
+      for (int i = 0; i <= fontHeight + gap; i++)
+      {
+        dmd.drawFilledBox(clearStart_X, 0, 31, 15, GRAPHICS_NOR);
 
-            dmd.selectFont(Font12x6);
+        dmd.selectFont(Font12x6);
 
-            // B. Animate TENS (Only if changed)
-            if (new_tens != old_tens) {
-               sprintf(tens_str, "%d", old_tens);
-               dmd.drawString(secX_Tens, secY - i, tens_str, 1, GRAPHICS_OR);
-               
-               sprintf(tens_str, "%d", new_tens);
-               dmd.drawString(secX_Tens, (secY + fontHeight + gap) - i, tens_str, 1, GRAPHICS_OR);
-            }
+        // B. Animate TENS (Only if changed)
+        if (new_tens != old_tens)
+        {
+          sprintf(tens_str, "%d", old_tens);
+          dmd.drawString(secX_Tens, secY - i, tens_str, 1, GRAPHICS_OR);
 
-            // C. Animate UNITS (Always animate)
-            sprintf(units_str, "%d", old_units);
-            dmd.drawString(secX_Units, secY - i, units_str, 1, GRAPHICS_OR);
-            
-            sprintf(units_str, "%d", new_units);
-            dmd.drawString(secX_Units, (secY + fontHeight + gap) - i, units_str, 1, GRAPHICS_OR);
+          sprintf(tens_str, "%d", new_tens);
+          dmd.drawString(secX_Tens, (secY + fontHeight + gap) - i, tens_str, 1, GRAPHICS_OR);
+        }
 
-            // >>> UPDATED DELAY HERE <<<
-            // Increased to 60ms to make animation take ~0.9 seconds total
-            vTaskDelay(60 / portTICK_PERIOD_MS); 
-          }
+        // C. Animate UNITS (Always animate)
+        sprintf(units_str, "%d", old_units);
+        dmd.drawString(secX_Units, secY - i, units_str, 1, GRAPHICS_OR);
 
-          last_second = _second;
-       }
+        sprintf(units_str, "%d", new_units);
+        dmd.drawString(secX_Units, (secY + fontHeight + gap) - i, units_str, 1, GRAPHICS_OR);
+
+        // >>> UPDATED DELAY HERE <<<
+        // Increased to 60ms to make animation take ~0.9 seconds total
+        vTaskDelay(60 / portTICK_PERIOD_MS);
+      }
+
+      last_second = _second;
     }
     // Reduced outer delay slightly to ensure we catch the next second immediately after animation
     vTaskDelay(1 / portTICK_PERIOD_MS);
@@ -237,7 +235,6 @@ void Clock4Task(void *pvParameters)
   const long interval = 1000;
   unsigned long previousMillis = 0;
   char hr_24[3], mn[3], dateStr[3];
-  struct tm timeinfo;
   const char *dayNames[] = {"SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"};
 
   for (;;)
@@ -247,11 +244,10 @@ void Clock4Task(void *pvParameters)
     {
       previousMillis = currentMillis;
 
-      if (myGetLocalTime(&timeinfo))
-      {
-        _hour24 = timeinfo.tm_hour;
-        _minute = timeinfo.tm_min;
-        _second = timeinfo.tm_sec;
+      DateTime now = rtc.now();
+      _hour24 = now.hour();
+      _minute = now.minute();
+      _second = now.second();
 
         dmd.selectFont(Font5x7Nbox);
         _hour12 = _hour24 % 12;
@@ -276,13 +272,12 @@ void Clock4Task(void *pvParameters)
         }
 
         dmd.selectFont(System5x7);
-        dmd.drawString(0, 9, dayNames[timeinfo.tm_wday], 3, GRAPHICS_NORMAL);
+        dmd.drawString(0, 9, dayNames[now.dayOfTheWeek()], 3, GRAPHICS_NORMAL);
 
         dmd.selectFont(Font5x7Nbox);
-        sprintf(dateStr, "%02d", timeinfo.tm_mday);
+        sprintf(dateStr, "%02d", now.day());
         dmd.drawString(20, 8, dateStr, 2, GRAPHICS_NORMAL);
       }
-    }
     vTaskDelay(50 / portTICK_PERIOD_MS);
   }
 }
@@ -291,8 +286,7 @@ void Clock5Task(void *pvParameters)
 {
   const long interval = 1000;
   unsigned long previousMillis = 0;
-  char hr_24[3], mn[3], date[3], month[3]; 
-  struct tm timeinfo;
+  char hr_24[3], mn[3], date[3], month[3];
   const char *dayNames[] = {"SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"};
 
   for (;;)
@@ -302,11 +296,10 @@ void Clock5Task(void *pvParameters)
     {
       previousMillis = currentMillis;
 
-      if (myGetLocalTime(&timeinfo))
-      {
-        _hour24 = timeinfo.tm_hour;
-        _minute = timeinfo.tm_min;
-        _second = timeinfo.tm_sec;
+      DateTime now = rtc.now();
+      _hour24 = now.hour();
+      _minute = now.minute();
+      _second = now.second();
 
         // --- TOP ROW: TIME ---
         dmd.selectFont(Font5x10Nbox); // Large font for numbers
@@ -322,11 +315,14 @@ void Clock5Task(void *pvParameters)
 
         // --- AM/PM ADDITION ---
         // We switch to the smaller font to fit 'A' or 'P' on the edge (x=28)
-        dmd.selectFont(SystemFont3x5); 
-        if (_hour24 >= 12) {
-            dmd.drawString(27, 3, "P", 1, GRAPHICS_NORMAL); // Draw 'P' at bottom-right of numbers
-        } else {
-            dmd.drawString(28, 3, "A", 1, GRAPHICS_NORMAL); // Draw 'A'
+        dmd.selectFont(SystemFont3x5);
+        if (_hour24 >= 12)
+        {
+          dmd.drawString(27, 3, "P", 1, GRAPHICS_NORMAL); // Draw 'P' at bottom-right of numbers
+        }
+        else
+        {
+          dmd.drawString(28, 3, "A", 1, GRAPHICS_NORMAL); // Draw 'A'
         }
 
         // --- BLINKING COLON ---
@@ -346,18 +342,17 @@ void Clock5Task(void *pvParameters)
         dmd.selectFont(SystemFont3x5); // Ensure small font is selected for date
 
         // 1. Format Date as DD.MM
-        sprintf(date, "%02d", timeinfo.tm_mday);
+        sprintf(date, "%02d", now.day());
         dmd.drawString(0, 11, date, 3, GRAPHICS_NORMAL);
-        
+
         dmd.drawFilledBox(8, 15, 8, 15, GRAPHICS_OR); // The dot
-        
-        sprintf(month, "%02d", timeinfo.tm_mon + 1);
+
+        sprintf(month, "%02d", now.month() + 1);
         dmd.drawString(10, 11, month, 3, GRAPHICS_NORMAL);
 
         // 2. Draw Week Day Name
-        dmd.drawString(21, 11, dayNames[timeinfo.tm_wday], 3, GRAPHICS_NORMAL);
+        dmd.drawString(21, 11, dayNames[now.dayOfTheWeek()], 3, GRAPHICS_NORMAL);
       }
-    }
     vTaskDelay(50 / portTICK_PERIOD_MS);
   }
 }
@@ -367,7 +362,6 @@ void Clock6Task(void *pvParameters)
   const long interval = 1000;
   unsigned long previousMillis = 0;
   char hr_24[3], mn[3], dateStr[3];
-  struct tm timeinfo;
 
   // CHANGED: Defined month names instead of day names
   const char *monthNames[] = {"JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"};
@@ -379,11 +373,9 @@ void Clock6Task(void *pvParameters)
     {
       previousMillis = currentMillis;
 
-      if (myGetLocalTime(&timeinfo))
-      {
-        _hour24 = timeinfo.tm_hour;
-        _minute = timeinfo.tm_min;
-        _second = timeinfo.tm_sec;
+      DateTime now = rtc.now();
+      _hour24 = now.hour();
+      _minute = now.minute();
 
         dmd.selectFont(Font5x7Nbox);
         _hour12 = _hour24 % 12;
@@ -400,140 +392,98 @@ void Clock6Task(void *pvParameters)
         dmd.drawFilledBox(13, 0, 13, 15, GRAPHICS_OR);
 
         // CHANGED: Now printing Month Name based on tm_mon
-        dmd.drawString(15, 0, monthNames[timeinfo.tm_mon], 3, GRAPHICS_NORMAL);
+        dmd.drawString(15, 0, monthNames[now.month() - 1], 3, GRAPHICS_NORMAL);
 
         dmd.selectFont(Font5x7Nbox);
-        sprintf(dateStr, "%02d", timeinfo.tm_mday);
+        sprintf(dateStr, "%02d", now.day());
         dmd.drawString(18, 8, dateStr, 2, GRAPHICS_NORMAL);
       }
-    }
     vTaskDelay(50 / portTICK_PERIOD_MS);
   }
 }
 //...............Clock7...................//
-void Clock7Task(void *pvParameters)
-{
-  const long interval = 1000;      // Update clock every 1 second
-  const long scrollInterval = 100; // Scroll speed (lower is faster)
-
+void Clock7Task(void* pvParameters) {
+  const long interval = 1000;       
+  const long scrollInterval = 100;  
   unsigned long previousMillis = 0;
   unsigned long lastScrollMillis = 0;
 
-  // Buffers
   char hr_24[3], mn[3];
-  char dateScrollBuffer[80]; // Buffer for long date string
+  char dateScrollBuffer[80];
 
-  // Scroll Variables
-  int scrollX = 32;    // Start off-screen to the right
-  int textWidth = 0;   // Will be calculated based on the text
-  int currentDay = -1; // To detect date changes
+  int scrollX = 32;     
+  int textWidth = 0;    
+  int currentDay = -1;  
 
-  struct tm timeinfo;
+  const char* fullDayNames[] = {
+    "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"
+  };
+  const char* fullMonthNames[] = {
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December"
+  };
 
-  const char *fullDayNames[] = {
-      "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"};
-  const char *fullMonthNames[] = {
-      "January", "February", "March", "April", "May", "June",
-      "July", "August", "September", "October", "November", "December"};
-
-  for (;;)
-  {
+  for (;;) {
     unsigned long currentMillis = millis();
 
-    // ============================================================
-    // 1. CLOCK UPDATE (Runs once per second)
-    // ============================================================
-    if (currentMillis - previousMillis >= interval)
-    {
+    // 1. CLOCK UPDATE
+    if (currentMillis - previousMillis >= interval) {
       previousMillis = currentMillis;
 
-      if (myGetLocalTime(&timeinfo))
-      {
-        // --- Update Time Variables ---
-        _hour24 = timeinfo.tm_hour;
-        _minute = timeinfo.tm_min;
-        _second = timeinfo.tm_sec;
+      DateTime now = rtc.now();
+      _hour24 = now.hour();
+      _minute = now.minute();
+      _second = now.second();
 
-        // --- Prepare Date String (Only once per day) ---
-        if (timeinfo.tm_mday != currentDay)
-        {
-          currentDay = timeinfo.tm_mday;
+      if (now.day() != currentDay) {
+        currentDay = now.day();
+        sprintf(dateScrollBuffer, "%s %02d-%s %d",
+                fullDayNames[now.dayOfTheWeek()],
+                now.day(),
+                fullMonthNames[now.month() - 1], 
+                now.year());
 
-          // Format: "Friday January 01 2025"
-          sprintf(dateScrollBuffer, "%s %02d-%s %d",
-                  fullDayNames[timeinfo.tm_wday],
-                  timeinfo.tm_mday,
-                  fullMonthNames[timeinfo.tm_mon],
-                  timeinfo.tm_year + 1900);
-
-          // --- MANUAL WIDTH CALCULATION (Fix for missing stringWidth) ---
-          dmd.selectFont(System5x7);
-          textWidth = 0;
-          for (int i = 0; i < strlen(dateScrollBuffer); i++)
-          {
-            // Add width of character + 1 pixel for spacing
-            textWidth += dmd.charWidth(dateScrollBuffer[i]) + 1;
-          }
+        dmd.selectFont(System5x7);
+        textWidth = 0;
+        for (int i = 0; i < strlen(dateScrollBuffer); i++) {
+          textWidth += dmd.charWidth(dateScrollBuffer[i]) + 1;
         }
+      }
 
-        // --- Draw Static Clock (Top Row) ---
-        dmd.selectFont(Font5x7Nbox); // Select Large Font for Clock
-        // dmd.selectFont(System5x7);
+      dmd.selectFont(Font5x7Nbox);
+      _hour12 = _hour24 % 12;
+      if (_hour12 == 0) _hour12 = 12;
 
-        _hour12 = _hour24 % 12;
-        if (_hour12 == 0)
-          _hour12 = 12;
+      sprintf(hr_24, "%02d", _hour12);
+      dmd.drawString(3, -1, hr_24, 2, GRAPHICS_NORMAL);
 
-        sprintf(hr_24, "%02d", _hour12);
-        dmd.drawString(3, -1, hr_24, 2, GRAPHICS_NORMAL);
+      sprintf(mn, "%02d", _minute);
+      dmd.drawString(18, -1, mn, 2, GRAPHICS_NORMAL);
 
-        sprintf(mn, "%02d", _minute);
-        dmd.drawString(18, -1, mn, 2, GRAPHICS_NORMAL);
-
-        // Blinking Colon
-        if (_second % 2 == 0)
-        {
-          dmd.drawFilledBox(15, 1, 16, 2, GRAPHICS_OR);
-          dmd.drawFilledBox(15, 4, 16, 5, GRAPHICS_OR);
-        }
-        else
-        {
-          dmd.drawFilledBox(15, 1, 16, 2, GRAPHICS_NOR); // Erase dots
-          dmd.drawFilledBox(15, 4, 16, 5, GRAPHICS_NOR);
-        }
+      if (_second % 2 == 0) {
+        dmd.drawFilledBox(15, 1, 16, 2, GRAPHICS_OR);
+        dmd.drawFilledBox(15, 4, 16, 5, GRAPHICS_OR);
+      } else {
+        dmd.drawFilledBox(15, 1, 16, 2, GRAPHICS_NOR);
+        dmd.drawFilledBox(15, 4, 16, 5, GRAPHICS_NOR);
       }
     }
 
-    // ============================================================
-    // 2. SCROLL ANIMATION (Runs every 50ms)
-    // ============================================================
-    if (currentMillis - lastScrollMillis >= scrollInterval)
-    {
+    // 2. SCROLL ANIMATION
+    if (currentMillis - lastScrollMillis >= scrollInterval) {
       lastScrollMillis = currentMillis;
-
-      // 1. Clear only the bottom area (Pixels Y=9 to Y=15)
-      // FIX: Changed GRAPHICS_OFF to GRAPHICS_NOR (which erases pixels)
-      dmd.drawFilledBox(0, 9, 31, 15, GRAPHICS_NOR);
-
-      // 2. Update Position
+      dmd.drawFilledBox(0, 9, 31, 15, GRAPHICS_NOR); 
       scrollX--;
-
-      // If text has gone completely off the left side, reset to right side
-      if (scrollX < -textWidth)
-      {
+      if (scrollX < -textWidth) {
         scrollX = 32;
       }
-
-      // 3. Draw the Text at the new 'scrollX' position
       dmd.selectFont(System5x7);
       dmd.drawString(scrollX, 9, dateScrollBuffer, strlen(dateScrollBuffer), GRAPHICS_NORMAL);
     }
-
-    // Small delay to prevent watchdog crashing
     vTaskDelay(10 / portTICK_PERIOD_MS);
   }
 }
-//==============Clock7===============//
+//==============Clock8===============//
 void Clock8Task(void *pvParameters)
 {
   const long interval = 1000;
@@ -543,11 +493,7 @@ void Clock8Task(void *pvParameters)
   unsigned long lastSwitchMillis = 0;
 
   char hr_24[3], mn[3];
-  // We don't need a single global 'bottomBuffer' anymore
-  // because we will create specific buffers inside the states.
-
   int displayState = 0;
-  struct tm timeinfo;
 
   const char *dayNames[] = {"SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"};
   const char *monthNames[] = {"JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"};
@@ -563,56 +509,57 @@ void Clock8Task(void *pvParameters)
     {
       previousMillis = currentMillis;
 
-      if (myGetLocalTime(&timeinfo))
+      // GET TIME FROM RTC
+      DateTime now = rtc.now(); 
+      _hour24 = now.hour();
+      _minute = now.minute();
+      _second = now.second();
+
+      dmd.selectFont(Font5x7Nbox);
+
+      _hour12 = _hour24 % 12;
+      if (_hour12 == 0)
+        _hour12 = 12;
+
+      sprintf(hr_24, "%02d", _hour12);
+      dmd.drawString(3, -1, hr_24, 2, GRAPHICS_NORMAL);
+
+      sprintf(mn, "%02d", _minute);
+      dmd.drawString(18, -1, mn, 2, GRAPHICS_NORMAL);
+
+      if (_second % 2 == 0)
       {
-        _hour24 = timeinfo.tm_hour;
-        _minute = timeinfo.tm_min;
-        _second = timeinfo.tm_sec;
-
-        dmd.selectFont(Font5x7Nbox);
-
-        _hour12 = _hour24 % 12;
-        if (_hour12 == 0)
-          _hour12 = 12;
-
-        sprintf(hr_24, "%02d", _hour12);
-        dmd.drawString(3, -1, hr_24, 2, GRAPHICS_NORMAL);
-
-        sprintf(mn, "%02d", _minute);
-        dmd.drawString(18, -1, mn, 2, GRAPHICS_NORMAL);
-
-        if (_second % 2 == 0)
-        {
-          dmd.drawFilledBox(15, 1, 16, 2, GRAPHICS_OR);
-          dmd.drawFilledBox(15, 4, 16, 5, GRAPHICS_OR);
-        }
-        else
-        {
-          dmd.drawFilledBox(15, 1, 16, 2, GRAPHICS_NOR);
-          dmd.drawFilledBox(15, 4, 16, 5, GRAPHICS_NOR);
-        }
+        dmd.drawFilledBox(15, 1, 16, 2, GRAPHICS_OR);
+        dmd.drawFilledBox(15, 4, 16, 5, GRAPHICS_OR);
+      }
+      else
+      {
+        dmd.drawFilledBox(15, 1, 16, 2, GRAPHICS_NOR);
+        dmd.drawFilledBox(15, 4, 16, 5, GRAPHICS_NOR);
       }
     }
 
     // ============================================================
-    // 2. BOTTOM TEXT SWITCHER (Fully Manual Control)
+    // 2. BOTTOM TEXT SWITCHER (RTC Based)
     // ============================================================
     if (currentMillis - lastSwitchMillis >= switchInterval)
     {
       lastSwitchMillis = currentMillis;
+      
+      // Get time again for bottom section ensuring sync
+      DateTime now = rtc.now();
 
       // 1. Clear the bottom area
       dmd.drawFilledBox(0, 9, 31, 15, GRAPHICS_NOR);
-
-      dmd.selectFont(System5x7);
 
       // --------------------------------------------------------
       // STATE 0: WEEK DAY NAME (e.g., "MON")
       // --------------------------------------------------------
       if (displayState == 0)
       {
+        dmd.selectFont(System5x7);
         char weekBuf[5];
-        sprintf(weekBuf, "%s", dayNames[timeinfo.tm_wday]);
+        sprintf(weekBuf, "%s", dayNames[now.dayOfTheWeek()]);
 
         // >>> CONTROL: Set Position for Week Name <<<
         int x = 8;
@@ -626,10 +573,9 @@ void Clock8Task(void *pvParameters)
       // --------------------------------------------------------
       else if (displayState == 1)
       {
-
         // --- PART A: Draw Date (e.g., "22") ---
         char dateBuf[3];
-        sprintf(dateBuf, "%02d", timeinfo.tm_mday);
+        sprintf(dateBuf, "%02d", now.day());
 
         // >>> CONTROL: Set Position for Date Number <<<
         dmd.selectFont(Font5x7Nbox);
@@ -639,7 +585,8 @@ void Clock8Task(void *pvParameters)
 
         // --- PART B: Draw Month (e.g., "DEC") ---
         char monthBuf[4];
-        sprintf(monthBuf, "%s", monthNames[timeinfo.tm_mon]);
+        // Note: RTC month is 1-12, Array is 0-11. So subtract 1.
+        sprintf(monthBuf, "%s", monthNames[now.month() - 1]);
 
         // >>> CONTROL: Set Position for Month Name <<<
         dmd.selectFont(System5x7);
@@ -656,7 +603,7 @@ void Clock8Task(void *pvParameters)
       {
         dmd.selectFont(Font5x7Nbox); // Different font for year
         char yearBuf[5];
-        sprintf(yearBuf, "%d", timeinfo.tm_year + 1900);
+        sprintf(yearBuf, "%d", now.year());
 
         // >>> CONTROL: Set Position for Year <<<
         int yearX = 4;
