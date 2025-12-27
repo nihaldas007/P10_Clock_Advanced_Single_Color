@@ -1,7 +1,7 @@
 //......................ESP32 only 1.0.6 Board (Preferred)............//
 #include <Arduino.h>
 #include <DMD32.h>
-#include <RTClib.h>       
+#include <RTClib.h>
 #include <WiFi.h>
 #include <WiFiManager.h> // Install "WiFiManager" by tzapu
 #include <SPI.h>
@@ -10,23 +10,23 @@
 #include "Clocks.h"
 
 // Pins
-#define TRIGGER_PIN 32 // The BOOT button
-#define RTC_POWERPIN 26 // The BOOT button
+#define UP_PIN 32   // The BOOT button
+#define DOWN_PIN 33   // The BOOT button
+#define RTC_POWERPIN 26  // The BOOT button
 Preferences preferences; // NEW: Create preferences object
 
 // Panel OE / Brightness
 const int PANEL_OE = 4;
 const int PWM_CHANNEL = 0;
-const int PWM_FREQ = 8000;
+const int PWM_FREQ = 16000;
 const int PWM_RES = 8;
 
-
 // --- NEW VARIABLES FOR BUTTON & BRIGHTNESS ---
-int brightnessIndex = 0;             // 0=Low, 1=Mid, 2=High
+int brightnessIndex = 0;              // 0=Low, 1=Mid, 2=High
 int brightnessValues[] = {5, 30, 50}; // The 3 levels you requested
-int clickCount = 0;                  // Counts how many times button is clicked
-unsigned long lastClickTime = 0;     // Timer for double click speed
-const int DOUBLE_CLICK_GAP = 400;    // Time (ms) to wait for a second click
+int clickCount = 0;                   // Counts how many times button is clicked
+unsigned long lastClickTime = 0;      // Timer for double click speed
+const int DOUBLE_CLICK_GAP = 400;     // Time (ms) to wait for a second click
 
 // ... existing forward declarations ...
 
@@ -46,7 +46,7 @@ void Clock7Task(void *pvParameters);
 void Clock8Task(void *pvParameters);
 bool myGetLocalTime(struct tm *timeinfo);
 void changeClockMode(int mode);
-void backgroundSyncTask(void* pvParameters);
+void backgroundSyncTask(void *pvParameters);
 // ------------------- Refresh Task -------------------
 void refreshDisplay(void *pvParameters)
 {
@@ -56,7 +56,6 @@ void refreshDisplay(void *pvParameters)
     vTaskDelay(1 / portTICK_PERIOD_MS);
   }
 }
-
 // ------------------- Brightness -------------------
 void setBrightness(int level)
 {
@@ -112,85 +111,73 @@ void changeClockMode(int mode)
   }
 }
 
-// ------------------- WiFiManager Callback -------------------
-void configModeCallback(WiFiManager *myWiFiManager)
-{
-  Serial.println("Entered config mode");
-  dmd.clearScreen(true);
-  dmd.selectFont(SystemFont5x7);
-  dmd.drawString(2, 0, "SETUP", 5, GRAPHICS_NORMAL);
-  dmd.drawString(5, 9, "WIFI", 4, GRAPHICS_NORMAL);
-}
 // ------------------- BACKGROUND WIFI/NTP TASK -------------------
-// Tries to connect silently. If fail, just exits. Does NOT open Portal.
-void backgroundSyncTask(void* pvParameters) {
-  Serial.println("[Task] Attempting background connection...");
-  
-  // Use standard WiFi begin (uses credentials stored by WiFiManager previously)
+// Runs FOREVER. Checks connection every 10 seconds.
+void backgroundSyncTask(void *pvParameters)
+{
+  // Set NTP config once at the start
+  configTime(gmtOffset_sec, daylightOffset_sec, ntpServer1, ntpServer2, ntpServer3);
+
+  // Ensure we are in Station mode
   WiFi.mode(WIFI_STA);
-  WiFi.begin();
 
-  // Wait up to 15 seconds for connection
-  int attempts = 0;
-  while (WiFi.status() != WL_CONNECTED && attempts < 30) {
-    vTaskDelay(500 / portTICK_PERIOD_MS);
-    attempts++;
-  }
+  for (;;)
+  { // Infinite Loop
 
-  if (WiFi.status() == WL_CONNECTED) {
-    Serial.println("[Task] WiFi Connected! Fetching NTP...");
-    
-    configTime(gmtOffset_sec, daylightOffset_sec, ntpServer1, ntpServer2, ntpServer3);
-    
-    struct tm timeinfo;
-    bool timeReceived = false;
-    
-    // Try to get time
-    for(int i=0; i<10; i++) {
-        if (getLocalTime(&timeinfo)) {
-            timeReceived = true;
-            break;
-        }
-        vTaskDelay(500 / portTICK_PERIOD_MS);
+    // 1. CHECK CONNECTION
+    if (WiFi.status() == WL_CONNECTED)
+    {
+      // --- We are Connected ---
+      struct tm timeinfo;
+      // Try to get time with short timeout (wait up to 200ms)
+      Serial.println("[Background] WiFi Connected. Fetching NTP...");
+      if (getLocalTime(&timeinfo, 200))
+      {
+        // Update RTC
+        rtc.adjust(DateTime(timeinfo.tm_year + 1900, timeinfo.tm_mon + 1, timeinfo.tm_mday,
+                            timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec));
+        Serial.println("[Background] WiFi OK. RTC Updated.");
+      }
+    }
+    else
+    {
+      // --- We are Disconnected ---
+      Serial.println("[Background] WiFi lost! Attempting Reconnect...");
+      // Try to reconnect using credentials saved by WiFiManager
+      WiFi.begin();
     }
 
-    if (timeReceived) {
-      Serial.println("[Task] Time synced. Updating RTC.");
-      rtc.adjust(DateTime(timeinfo.tm_year + 1900, timeinfo.tm_mon + 1, timeinfo.tm_mday,
-                          timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec));
-    } else {
-      Serial.println("[Task] NTP Unreachable.");
-    }
-  } else {
-    Serial.println("[Task] WiFi not found or credentials missing. Running offline.");
+    // 2. WAIT 10 SECONDS
+    vTaskDelay(10000 / portTICK_PERIOD_MS);
   }
-
-  // Task done, delete itself to free memory
-  ntpTaskHandle = NULL;
-  vTaskDelete(NULL);
+  // We never reach here, so no vTaskDelete needed.
 }
 // ------------------- Setup -------------------
 void setup()
 {
   Serial.begin(115200);
-  pinMode(TRIGGER_PIN, INPUT_PULLUP);
+  pinMode(UP_PIN, INPUT_PULLUP);
+  pinMode(DOWN_PIN, INPUT_PULLUP);
   pinMode(RTC_POWERPIN, OUTPUT);
-  digitalWrite(RTC_POWERPIN,HIGH);
+  digitalWrite(RTC_POWERPIN, HIGH);
   delay(500);
   // 1. Init Preferences
-  preferences.begin("clock-app", false);// RESTORE MODE
-  currentMode = preferences.getInt("mode", 0);// RESTORE BRIGHTNESS (NEW)
+  preferences.begin("clock-app", false);                // RESTORE MODE
+  currentMode = preferences.getInt("mode", 0);          // RESTORE BRIGHTNESS (NEW)
   brightnessIndex = preferences.getInt("brightIdx", 0); // Safety check: ensure index is 0-2
-  if(brightnessIndex < 0 || brightnessIndex > 2) brightnessIndex = 0;
+  if (brightnessIndex < 0 || brightnessIndex > 2)
+    brightnessIndex = 0;
 
-  Serial.print("Restored Mode: "); Serial.println(currentMode);
-  Serial.print("Restored Brightness: "); Serial.println(brightnessValues[brightnessIndex]);
+  Serial.print("Restored Mode: ");
+  Serial.println(currentMode);
+  Serial.print("Restored Brightness: ");
+  Serial.println(brightnessValues[brightnessIndex]);
 
   // 2. PWM & Brightness
   pinMode(PANEL_OE, OUTPUT);
   ledcSetup(PWM_CHANNEL, PWM_FREQ, PWM_RES);
   ledcAttachPin(PANEL_OE, PWM_CHANNEL);
-  
+
   // Apply the restored brightness immediately
   setBrightness(brightnessValues[brightnessIndex]);
 
@@ -198,8 +185,9 @@ void setup()
   xTaskCreatePinnedToCore(refreshDisplay, "refreshDisplay", 4096, NULL, 20, &refreshTaskHandle, 1);
 
   // 4. Initialize RTC
-  Wire.begin(); 
-  if (!rtc.begin()) {
+  Wire.begin();
+  if (!rtc.begin())
+  {
     Serial.println("Couldn't find RTC");
     dmd.clearScreen(true);
     dmd.selectFont(SystemFont5x7);
@@ -207,7 +195,8 @@ void setup()
     while (1);
   }
 
-  if (rtc.lostPower()) {
+  if (rtc.lostPower())
+  {
     Serial.println("RTC lost power, setting compile time");
     rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
   }
@@ -221,93 +210,108 @@ void setup()
 
 void loop()
 {
-  static int lastState = HIGH;
-  static unsigned long pressStart = 0;
-  int currentState = digitalRead(TRIGGER_PIN);
   unsigned long now = millis();
 
-  // --- 1. DETECT PRESS ---
-  if (lastState == HIGH && currentState == LOW)
+  // ==========================================
+  // BUTTON 33: MODE (Short) & WIFI (Long)
+  // ==========================================
+  static int lastState33 = HIGH;
+  static unsigned long pressStart33 = 0;
+  int currentState33 = digitalRead(UP_PIN);
+
+  // 1. Detect Press (Falling Edge)
+  if (lastState33 == HIGH && currentState33 == LOW)
   {
-    pressStart = now; // Record when button went down
+    pressStart33 = now;
   }
 
-  // --- 2. DETECT RELEASE ---
-  if (lastState == LOW && currentState == HIGH)
+  // 2. Detect Release (Rising Edge)
+  if (lastState33 == LOW && currentState33 == HIGH)
   {
-    unsigned long duration = now - pressStart;
+    unsigned long duration = now - pressStart33;
 
     if (duration > 3000)
     {
+      // --- LONG PRESS: WIFI CONFIG ---
       Serial.println("Long Press: Entering WiFi Config Portal");
-      
+
       // Stop other tasks
       if (clockTaskHandle != NULL) vTaskDelete(clockTaskHandle);
       if (ntpTaskHandle != NULL) vTaskDelete(ntpTaskHandle);
-      
+
       dmd.clearScreen(true);
       dmd.selectFont(SystemFont5x7);
       dmd.drawString(5, 0, "WIFI", 4, GRAPHICS_NORMAL);
       dmd.drawString(1, 8, "SETUP", 5, GRAPHICS_NORMAL);
-      
+
       WiFiManager wm;
-      wm.setConfigPortalTimeout(120); // Close after 2 mins if no one connects
+      wm.setClass("invert");
+      wm.setTitle("Setup WiFi");
+      wm.setConnectTimeout(20);
       
-      // This will block until user connects and saves, or timeout
-      if (!wm.startConfigPortal("Nihal_Clock")) {
+      const char *customHead = "<style>body{background:#e0ffe0;}button{background-color:red !important;}</style>";
+      wm.setCustomHeadElement(customHead);
+      
+      std::vector<const char *> menu = {"wifi", "restart", "exit"};
+      wm.setMenu(menu);
+      wm.setConfigPortalTimeout(120);
+
+      if (!wm.startConfigPortal("Smart Clock")) {
         Serial.println("Setup timed out");
       } else {
         Serial.println("WiFi Saved");
-        // Optional: Sync time immediately here if connected
-      } 
-      // Restart to apply everything clean
-      ESP.restart(); 
-      clickCount = 0; // Reset any pending clicks
+      }
+      ESP.restart();
     }
-    else if (duration > 50) 
+    else if (duration > 50)
     {
-      clickCount++;
-      lastClickTime = now;
-    }
-  }
-
-  // --- 3. HANDLE CLICKS AFTER TIMEOUT ---
-  // If we have clicks waiting, and enough time has passed (400ms) 
-  // to ensure the user isn't clicking again:
-  if (clickCount > 0 && (now - lastClickTime > DOUBLE_CLICK_GAP))
-  {
-    if (clickCount == 1)
-    {
-      // === SINGLE CLICK: CHANGE CLOCK MODE ===
+      // --- SHORT PRESS: CHANGE MODE ---
+      // (Moved from double-click logic to here)
       currentMode++;
       if (currentMode > 7) currentMode = 0;
-      
-      preferences.putInt("mode", currentMode); // Save Mode
+
+      preferences.putInt("mode", currentMode);
       Serial.println("Action: Switch Clock Mode");
       changeClockMode(currentMode);
     }
-    else if (clickCount >= 2)
-    {
-      // === DOUBLE CLICK: CHANGE BRIGHTNESS ===
-      brightnessIndex++;
-      if (brightnessIndex > 2) brightnessIndex = 0; // Cycle 0->1->2->0
-      
-      int newLevel = brightnessValues[brightnessIndex]; // Get 5, 50, or 100
-      setBrightness(newLevel);
-      
-      // Save Brightness to Memory
-      preferences.putInt("brightIdx", brightnessIndex); 
-      Serial.print("Action: Brightness Level ");
-      Serial.println(newLevel);
-      
-      // Optional: Visual Feedback on screen
-      // (Flash the brightness level briefly if you want)
-    }
+  }
+  lastState33 = currentState33;
 
-    // Reset count for next time
-    clickCount = 0;
+  // ==========================================
+  // BUTTON 32: BRIGHTNESS (Short Press)
+  // ==========================================
+  static int lastState32 = HIGH;
+  static unsigned long pressStart32 = 0;
+  int currentState32 = digitalRead(DOWN_PIN);
+
+  // 1. Detect Press
+  if (lastState32 == HIGH && currentState32 == LOW)
+  {
+    pressStart32 = now;
   }
 
-  lastState = currentState;
+  // 2. Detect Release
+  if (lastState32 == LOW && currentState32 == HIGH)
+  {
+    unsigned long duration = now - pressStart32;
+
+    // Simple debounce (> 50ms)
+    if (duration > 50)
+    {
+      // --- ACTION: CHANGE BRIGHTNESS ---
+      brightnessIndex++;
+      if (brightnessIndex > 2) brightnessIndex = 0; // Cycle 0->1->2->0
+
+      int newLevel = brightnessValues[brightnessIndex];
+      setBrightness(newLevel);
+
+      preferences.putInt("brightIdx", brightnessIndex);
+      Serial.print("Action: Brightness Level ");
+      Serial.println(newLevel);
+    }
+  }
+  lastState32 = currentState32;
+
+  // Small delay to prevent CPU hogging and assist debounce
   vTaskDelay(20 / portTICK_PERIOD_MS);
 }

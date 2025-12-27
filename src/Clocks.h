@@ -148,6 +148,20 @@ void Clock3Task(void *pvParameters)
   for (;;)
   {
     DateTime now = rtc.now();
+
+    // =========================================================
+    // FIX: DATA VALIDATION CHECK
+    // If the read failed, the year is usually 2000 or 165. 
+    // If so, skip this loop iteration and try again.
+    // =========================================================
+    if (now.year() <= 2000 || now.hour() > 23 || now.minute() > 59) 
+    {
+       // Read failed or returned garbage data. 
+       // Wait a tiny bit and retry without changing the display.
+       vTaskDelay(10 / portTICK_PERIOD_MS);
+       continue; 
+    }
+
     _second = now.second();
 
     if (_second != last_second)
@@ -218,15 +232,13 @@ void Clock3Task(void *pvParameters)
         sprintf(units_str, "%d", new_units);
         dmd.drawString(secX_Units, (secY + fontHeight + gap) - i, units_str, 1, GRAPHICS_OR);
 
-        // >>> UPDATED DELAY HERE <<<
-        // Increased to 60ms to make animation take ~0.9 seconds total
         vTaskDelay(60 / portTICK_PERIOD_MS);
       }
 
       last_second = _second;
     }
-    // Reduced outer delay slightly to ensure we catch the next second immediately after animation
-    vTaskDelay(1 / portTICK_PERIOD_MS);
+    // Reduced outer delay slightly
+    vTaskDelay(10 / portTICK_PERIOD_MS);
   }
 }
 // --- Clock 4 ---
