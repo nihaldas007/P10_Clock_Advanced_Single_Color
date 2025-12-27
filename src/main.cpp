@@ -28,12 +28,11 @@ int clickCount = 0;                   // Counts how many times button is clicked
 unsigned long lastClickTime = 0;      // Timer for double click speed
 const int DOUBLE_CLICK_GAP = 400;     // Time (ms) to wait for a second click
 
-// ... existing forward declarations ...
-
 // FreeRTOS task handles
 TaskHandle_t refreshTaskHandle = NULL;
 TaskHandle_t clockTaskHandle = NULL;
 TaskHandle_t ntpTaskHandle = NULL;
+SemaphoreHandle_t i2cMutex = NULL; // NEW: protect Wire/RTC access
 
 // Forward Declarations
 void Clock1Task(void *pvParameters);
@@ -53,7 +52,7 @@ void refreshDisplay(void *pvParameters)
   for (;;)
   {
     dmd.scanDisplayBySPI();
-    vTaskDelay(1 / portTICK_PERIOD_MS);
+    vTaskDelay(pdMS_TO_TICKS(1));
   }
 }
 // ------------------- Brightness -------------------
@@ -133,10 +132,15 @@ void backgroundSyncTask(void *pvParameters)
       Serial.println("[Background] WiFi Connected. Fetching NTP...");
       if (getLocalTime(&timeinfo, 200))
       {
-        // Update RTC
-        rtc.adjust(DateTime(timeinfo.tm_year + 1900, timeinfo.tm_mon + 1, timeinfo.tm_mday,
-                            timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec));
-        Serial.println("[Background] WiFi OK. RTC Updated.");
+        // Update RTC (try to take i2c mutex; skip if bus busy)
+        if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(500))) {
+          rtc.adjust(DateTime(timeinfo.tm_year + 1900, timeinfo.tm_mon + 1, timeinfo.tm_mday,
+                              timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec));
+          xSemaphoreGive(i2cMutex);
+          Serial.println("[Background] WiFi OK. RTC Updated.");
+        } else {
+          Serial.println("[Background] I2C busy: skipping RTC update.");
+        }
       }
     }
     else
@@ -148,7 +152,7 @@ void backgroundSyncTask(void *pvParameters)
     }
 
     // 2. WAIT 10 SECONDS
-    vTaskDelay(10000 / portTICK_PERIOD_MS);
+    vTaskDelay(pdMS_TO_TICKS(10000));
   }
   // We never reach here, so no vTaskDelete needed.
 }
@@ -186,6 +190,14 @@ void setup()
 
   // 4. Initialize RTC
   Wire.begin();
+
+  // Create I2C mutex to serialize all Wire/RTC usage (prevents heap corruption)
+  i2cMutex = xSemaphoreCreateMutex();
+  if (i2cMutex == NULL) {
+    Serial.println("ERROR: Failed to create I2C mutex");
+    while (1) vTaskDelay(pdMS_TO_TICKS(1000));
+  }
+
   if (!rtc.begin())
   {
     Serial.println("Couldn't find RTC");
@@ -313,5 +325,5 @@ void loop()
   lastState32 = currentState32;
 
   // Small delay to prevent CPU hogging and assist debounce
-  vTaskDelay(20 / portTICK_PERIOD_MS);
+  vTaskDelay(pdMS_TO_TICKS(20));
 }

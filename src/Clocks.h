@@ -82,7 +82,7 @@ void Clock1Task(void *pvParameters)
         dmd.drawFilledBox(15, 12, 16, 13, GRAPHICS_NOR);
       }
     }
-    vTaskDelay(50 / portTICK_PERIOD_MS);
+    vTaskDelay(pdMS_TO_TICKS(50));
   }
 }
 // --- Clock 2 ---
@@ -127,10 +127,11 @@ void Clock2Task(void *pvParameters)
         dmd.drawFilledBox(15, 10, 16, 11, GRAPHICS_NOR);
       }
     }
-    vTaskDelay(50 / portTICK_PERIOD_MS);
+    vTaskDelay(pdMS_TO_TICKS(50));
   }
 }
 
+extern SemaphoreHandle_t i2cMutex; // NEW: declared in main.cpp
 void Clock3Task(void *pvParameters)
 {
   char hr_24[3], mn[3];
@@ -147,19 +148,26 @@ void Clock3Task(void *pvParameters)
 
   for (;;)
   {
-    DateTime now = rtc.now();
+    DateTime now;
+    if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(200))) {
+      now = rtc.now();
+      xSemaphoreGive(i2cMutex);
+    } else {
+      // I2C busy; back off and retry
+      vTaskDelay(pdMS_TO_TICKS(500));
+      continue;
+    }
 
     // =========================================================
     // FIX: DATA VALIDATION CHECK
     // If the read failed, the year is usually 2000 or 165. 
     // If so, skip this loop iteration and try again.
     // =========================================================
-    if (now.year() <= 2000 || now.hour() > 23 || now.minute() > 59) 
+    if (now.year() <= 2000 || now.hour() > 23 || now.minute() > 59)
     {
-       // Read failed or returned garbage data. 
-       // Wait a tiny bit and retry without changing the display.
-       vTaskDelay(10 / portTICK_PERIOD_MS);
-       continue; 
+       // Read failed or returned garbage data. Back off and retry.
+      vTaskDelay(pdMS_TO_TICKS(500)); // avoid hammering I2C and prevent divide-by-zero
+       continue;
     }
 
     _second = now.second();
@@ -232,13 +240,13 @@ void Clock3Task(void *pvParameters)
         sprintf(units_str, "%d", new_units);
         dmd.drawString(secX_Units, (secY + fontHeight + gap) - i, units_str, 1, GRAPHICS_OR);
 
-        vTaskDelay(60 / portTICK_PERIOD_MS);
+        vTaskDelay(pdMS_TO_TICKS(60));
       }
 
       last_second = _second;
     }
     // Reduced outer delay slightly
-    vTaskDelay(10 / portTICK_PERIOD_MS);
+    vTaskDelay(pdMS_TO_TICKS(10));
   }
 }
 // --- Clock 4 ---
@@ -290,7 +298,7 @@ void Clock4Task(void *pvParameters)
         sprintf(dateStr, "%02d", now.day());
         dmd.drawString(20, 8, dateStr, 2, GRAPHICS_NORMAL);
       }
-    vTaskDelay(50 / portTICK_PERIOD_MS);
+    vTaskDelay(pdMS_TO_TICKS(50));
   }
 }
 
@@ -365,7 +373,7 @@ void Clock5Task(void *pvParameters)
         // 2. Draw Week Day Name
         dmd.drawString(21, 11, dayNames[now.dayOfTheWeek()], 3, GRAPHICS_NORMAL);
       }
-    vTaskDelay(50 / portTICK_PERIOD_MS);
+    vTaskDelay(pdMS_TO_TICKS(50));
   }
 }
 // --- Clock 6 ---
@@ -410,7 +418,7 @@ void Clock6Task(void *pvParameters)
         sprintf(dateStr, "%02d", now.day());
         dmd.drawString(18, 8, dateStr, 2, GRAPHICS_NORMAL);
       }
-    vTaskDelay(50 / portTICK_PERIOD_MS);
+    vTaskDelay(pdMS_TO_TICKS(50));
   }
 }
 //...............Clock7...................//
@@ -492,7 +500,7 @@ void Clock7Task(void* pvParameters) {
       dmd.selectFont(System5x7);
       dmd.drawString(scrollX, 9, dateScrollBuffer, strlen(dateScrollBuffer), GRAPHICS_NORMAL);
     }
-    vTaskDelay(10 / portTICK_PERIOD_MS);
+    vTaskDelay(pdMS_TO_TICKS(10));
   }
 }
 //==============Clock8===============//
@@ -626,6 +634,6 @@ void Clock8Task(void *pvParameters)
       }
     }
 
-    vTaskDelay(50 / portTICK_PERIOD_MS);
+    vTaskDelay(pdMS_TO_TICKS(50));
   }
 }
