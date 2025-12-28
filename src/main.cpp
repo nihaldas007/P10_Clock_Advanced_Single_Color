@@ -8,17 +8,18 @@
 #include <time.h>
 #include <Preferences.h> // NEW: For saving settings
 #include "Clocks.h"
+#include "Button.h"    // NEW: Button handling library
 
 // Pins
-#define UP_PIN 32   // The BOOT button
-#define DOWN_PIN 33   // The BOOT button
+#define UP_PIN 32        // The BOOT button
+#define DOWN_PIN 33      // The BOOT button
 #define RTC_POWERPIN 26  // The BOOT button
 Preferences preferences; // NEW: Create preferences object
 
 // Panel OE / Brightness
 const int PANEL_OE = 4;
 const int PWM_CHANNEL = 0;
-const int PWM_FREQ = 16000;
+const int PWM_FREQ = 1000;
 const int PWM_RES = 8;
 
 // --- NEW VARIABLES FOR BUTTON & BRIGHTNESS ---
@@ -28,6 +29,8 @@ int clickCount = 0;                   // Counts how many times button is clicked
 unsigned long lastClickTime = 0;      // Timer for double click speed
 const int DOUBLE_CLICK_GAP = 400;     // Time (ms) to wait for a second click
 
+Button btnUp(UP_PIN);
+Button btnDown(DOWN_PIN);
 // FreeRTOS task handles
 TaskHandle_t refreshTaskHandle = NULL;
 TaskHandle_t clockTaskHandle = NULL;
@@ -46,6 +49,8 @@ void Clock8Task(void *pvParameters);
 bool myGetLocalTime(struct tm *timeinfo);
 void changeClockMode(int mode);
 void backgroundSyncTask(void *pvParameters);
+int switchD();
+int switchU();
 // ------------------- Refresh Task -------------------
 void refreshDisplay(void *pvParameters)
 {
@@ -133,12 +138,15 @@ void backgroundSyncTask(void *pvParameters)
       if (getLocalTime(&timeinfo, 200))
       {
         // Update RTC (try to take i2c mutex; skip if bus busy)
-        if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(500))) {
+        if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(500)))
+        {
           rtc.adjust(DateTime(timeinfo.tm_year + 1900, timeinfo.tm_mon + 1, timeinfo.tm_mday,
                               timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec));
           xSemaphoreGive(i2cMutex);
           Serial.println("[Background] WiFi OK. RTC Updated.");
-        } else {
+        }
+        else
+        {
           Serial.println("[Background] I2C busy: skipping RTC update.");
         }
       }
@@ -193,9 +201,11 @@ void setup()
 
   // Create I2C mutex to serialize all Wire/RTC usage (prevents heap corruption)
   i2cMutex = xSemaphoreCreateMutex();
-  if (i2cMutex == NULL) {
+  if (i2cMutex == NULL)
+  {
     Serial.println("ERROR: Failed to create I2C mutex");
-    while (1) vTaskDelay(pdMS_TO_TICKS(1000));
+    while (1)
+      vTaskDelay(pdMS_TO_TICKS(1000));
   }
 
   if (!rtc.begin())
@@ -204,7 +214,8 @@ void setup()
     dmd.clearScreen(true);
     dmd.selectFont(SystemFont5x7);
     dmd.drawString(0, 4, "NO RTC", 6, GRAPHICS_NORMAL);
-    while (1);
+    while (1)
+      ;
   }
 
   if (rtc.lostPower())
@@ -222,108 +233,69 @@ void setup()
 
 void loop()
 {
-  unsigned long now = millis();
-
-  // ==========================================
-  // BUTTON 33: MODE (Short) & WIFI (Long)
-  // ==========================================
-  static int lastState33 = HIGH;
-  static unsigned long pressStart33 = 0;
-  int currentState33 = digitalRead(UP_PIN);
-
-  // 1. Detect Press (Falling Edge)
-  if (lastState33 == HIGH && currentState33 == LOW)
+  int upState = btnUp.check();
+  if (upState == 1)
   {
-    pressStart33 = now;
+    currentMode++;
+    if (currentMode > 7)
+      currentMode = 0;
+
+    preferences.putInt("mode", currentMode);
+    Serial.println("Action: Switch Clock Mode");
+    changeClockMode(currentMode);
   }
-
-  // 2. Detect Release (Rising Edge)
-  if (lastState33 == LOW && currentState33 == HIGH)
+  else if (upState == 2)
   {
-    unsigned long duration = now - pressStart33;
+    Serial.println("Long Press: Entering WiFi Config Portal");
 
-    if (duration > 3000)
+    // Stop other tasks
+    if (clockTaskHandle != NULL)
+      vTaskDelete(clockTaskHandle);
+    if (ntpTaskHandle != NULL)
+      vTaskDelete(ntpTaskHandle);
+
+    dmd.clearScreen(true);
+    dmd.selectFont(SystemFont5x7);
+    dmd.drawString(5, 0, "WIFI", 4, GRAPHICS_NORMAL);
+    dmd.drawString(1, 8, "SETUP", 5, GRAPHICS_NORMAL);
+
+    WiFiManager wm;
+    wm.setClass("invert");
+    wm.setTitle("Setup WiFi");
+    wm.setConnectTimeout(20);
+
+    const char *customHead = "<style>body{background:#e0ffe0;}button{background-color:red !important;}</style>";
+    wm.setCustomHeadElement(customHead);
+
+    std::vector<const char *> menu = {"wifi", "restart", "exit"};
+    wm.setMenu(menu);
+    wm.setConfigPortalTimeout(120);
+
+    if (!wm.startConfigPortal("Smart Clock"))
     {
-      // --- LONG PRESS: WIFI CONFIG ---
-      Serial.println("Long Press: Entering WiFi Config Portal");
-
-      // Stop other tasks
-      if (clockTaskHandle != NULL) vTaskDelete(clockTaskHandle);
-      if (ntpTaskHandle != NULL) vTaskDelete(ntpTaskHandle);
-
-      dmd.clearScreen(true);
-      dmd.selectFont(SystemFont5x7);
-      dmd.drawString(5, 0, "WIFI", 4, GRAPHICS_NORMAL);
-      dmd.drawString(1, 8, "SETUP", 5, GRAPHICS_NORMAL);
-
-      WiFiManager wm;
-      wm.setClass("invert");
-      wm.setTitle("Setup WiFi");
-      wm.setConnectTimeout(20);
-      
-      const char *customHead = "<style>body{background:#e0ffe0;}button{background-color:red !important;}</style>";
-      wm.setCustomHeadElement(customHead);
-      
-      std::vector<const char *> menu = {"wifi", "restart", "exit"};
-      wm.setMenu(menu);
-      wm.setConfigPortalTimeout(120);
-
-      if (!wm.startConfigPortal("Smart Clock")) {
-        Serial.println("Setup timed out");
-      } else {
-        Serial.println("WiFi Saved");
-      }
-      ESP.restart();
+      Serial.println("Setup timed out");
     }
-    else if (duration > 50)
+    else
     {
-      // --- SHORT PRESS: CHANGE MODE ---
-      // (Moved from double-click logic to here)
-      currentMode++;
-      if (currentMode > 7) currentMode = 0;
-
-      preferences.putInt("mode", currentMode);
-      Serial.println("Action: Switch Clock Mode");
-      changeClockMode(currentMode);
+      Serial.println("WiFi Saved");
     }
+    ESP.restart();
   }
-  lastState33 = currentState33;
-
-  // ==========================================
-  // BUTTON 32: BRIGHTNESS (Short Press)
-  // ==========================================
-  static int lastState32 = HIGH;
-  static unsigned long pressStart32 = 0;
-  int currentState32 = digitalRead(DOWN_PIN);
-
-  // 1. Detect Press
-  if (lastState32 == HIGH && currentState32 == LOW)
+  int downState = btnDown.check();
+  if (downState == 1)
   {
-    pressStart32 = now;
+    brightnessIndex++;
+    if (brightnessIndex > 2)
+      brightnessIndex = 0; // Cycle 0->1->2->0
+
+    int newLevel = brightnessValues[brightnessIndex];
+    setBrightness(newLevel);
+
+    preferences.putInt("brightIdx", brightnessIndex);
+    Serial.print("Action: Brightness Level ");
+    Serial.println(newLevel);
   }
-
-  // 2. Detect Release
-  if (lastState32 == LOW && currentState32 == HIGH)
-  {
-    unsigned long duration = now - pressStart32;
-
-    // Simple debounce (> 50ms)
-    if (duration > 50)
-    {
-      // --- ACTION: CHANGE BRIGHTNESS ---
-      brightnessIndex++;
-      if (brightnessIndex > 2) brightnessIndex = 0; // Cycle 0->1->2->0
-
-      int newLevel = brightnessValues[brightnessIndex];
-      setBrightness(newLevel);
-
-      preferences.putInt("brightIdx", brightnessIndex);
-      Serial.print("Action: Brightness Level ");
-      Serial.println(newLevel);
-    }
-  }
-  lastState32 = currentState32;
-
-  // Small delay to prevent CPU hogging and assist debounce
+  
   vTaskDelay(pdMS_TO_TICKS(20));
 }
+
