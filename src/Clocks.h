@@ -1,6 +1,8 @@
 #pragma once
 
 #include <Arduino.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
 #include <DMD32.h>
 #include <SPI.h>
 #include <time.h>
@@ -34,7 +36,7 @@ const int daylightOffset_sec = 0;
 const char *ntpServer1 = "time.google.com";
 const char *ntpServer2 = "time.nist.gov";
 const char *ntpServer3 = "pool.ntp.org";
-
+extern SemaphoreHandle_t i2cMutex;
 // ------------------- Helper: Get Time -------------------
 bool myGetLocalTime(struct tm *timeinfo)
 {
@@ -55,7 +57,20 @@ void Clock1Task(void *pvParameters)
     {
       previousMillis = currentMillis;
 
-      DateTime now = rtc.now();
+      DateTime now;
+      if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(200))) {
+        now = rtc.now();
+        xSemaphoreGive(i2cMutex);
+      } else {
+        // I2C busy; back off and skip this update
+        vTaskDelay(pdMS_TO_TICKS(200));
+        continue;
+      }
+      // Basic read validation to detect garbage reads
+      if (now.year() <= 2000 || now.hour() > 23 || now.minute() > 59) {
+        vTaskDelay(pdMS_TO_TICKS(200));
+        continue;
+      }
       _hour24 = now.hour();
       _minute = now.minute();
       _second = now.second();
@@ -99,7 +114,20 @@ void Clock2Task(void *pvParameters)
     {
       previousMillis = currentMillis;
 
-      DateTime now = rtc.now();
+      DateTime now;
+      if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(200))) {
+        now = rtc.now();
+        xSemaphoreGive(i2cMutex);
+      } else {
+        // I2C busy; back off and skip this update
+        vTaskDelay(pdMS_TO_TICKS(200));
+        continue;
+      }
+      // Basic read validation to detect garbage reads
+      if (now.year() <= 2000 || now.hour() > 23 || now.minute() > 59) {
+        vTaskDelay(pdMS_TO_TICKS(200));
+        continue;
+      }
       _hour24 = now.hour();
       _minute = now.minute();
       _second = now.second();
@@ -131,7 +159,7 @@ void Clock2Task(void *pvParameters)
   }
 }
 
-extern SemaphoreHandle_t i2cMutex; // NEW: declared in main.cpp
+ // NEW: declared in main.cpp
 void Clock3Task(void *pvParameters)
 {
   char hr_24[3], mn[3];
@@ -157,7 +185,6 @@ void Clock3Task(void *pvParameters)
       vTaskDelay(pdMS_TO_TICKS(500));
       continue;
     }
-
     // =========================================================
     // FIX: DATA VALIDATION CHECK
     // If the read failed, the year is usually 2000 or 165. 
@@ -316,7 +343,20 @@ void Clock5Task(void *pvParameters)
     {
       previousMillis = currentMillis;
 
-      DateTime now = rtc.now();
+      DateTime now;
+      if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(200))) {
+        now = rtc.now();
+        xSemaphoreGive(i2cMutex);
+      } else {
+        // I2C busy; back off and skip this update
+        vTaskDelay(pdMS_TO_TICKS(200));
+        continue;
+      }
+      // Basic read validation to detect garbage reads
+      if (now.year() <= 2000 || now.hour() > 23 || now.minute() > 59) {
+        vTaskDelay(pdMS_TO_TICKS(200));
+        continue;
+      }
       _hour24 = now.hour();
       _minute = now.minute();
       _second = now.second();
@@ -367,7 +407,7 @@ void Clock5Task(void *pvParameters)
 
         dmd.drawFilledBox(8, 15, 8, 15, GRAPHICS_OR); // The dot
 
-        sprintf(month, "%02d", now.month() + 1);
+        sprintf(month, "%02d", now.month());
         dmd.drawString(10, 11, month, 3, GRAPHICS_NORMAL);
 
         // 2. Draw Week Day Name
@@ -393,10 +433,23 @@ void Clock6Task(void *pvParameters)
     {
       previousMillis = currentMillis;
 
-      DateTime now = rtc.now();
+      DateTime now;
+      if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(200))) {
+        now = rtc.now();
+        xSemaphoreGive(i2cMutex);
+      } else {
+        // I2C busy; back off and skip this update
+        vTaskDelay(pdMS_TO_TICKS(200));
+        continue;
+      }
+      // Basic read validation to detect garbage reads
+      if (now.year() <= 2000 || now.hour() > 23 || now.minute() > 59) {
+        vTaskDelay(pdMS_TO_TICKS(200));
+        continue;
+      }
       _hour24 = now.hour();
       _minute = now.minute();
-
+      
         dmd.selectFont(Font5x7Nbox);
         _hour12 = _hour24 % 12;
         if (_hour12 == 0)
@@ -450,7 +503,20 @@ void Clock7Task(void* pvParameters) {
     if (currentMillis - previousMillis >= interval) {
       previousMillis = currentMillis;
 
-      DateTime now = rtc.now();
+      DateTime now;
+      if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(200))) {
+        now = rtc.now();
+        xSemaphoreGive(i2cMutex);
+      } else {
+        // I2C busy; back off and skip this update
+        vTaskDelay(pdMS_TO_TICKS(200));
+        continue;
+      }
+      // Basic read validation to detect garbage reads
+      if (now.year() <= 2000 || now.hour() > 23 || now.minute() > 59) {
+        vTaskDelay(pdMS_TO_TICKS(200));
+        continue;
+      }
       _hour24 = now.hour();
       _minute = now.minute();
       _second = now.second();
@@ -530,7 +596,20 @@ void Clock8Task(void *pvParameters)
       previousMillis = currentMillis;
 
       // GET TIME FROM RTC
-      DateTime now = rtc.now(); 
+      DateTime now;
+      if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(200))) {
+        now = rtc.now();
+        xSemaphoreGive(i2cMutex);
+      } else {
+        // I2C busy; back off and skip this update
+        vTaskDelay(pdMS_TO_TICKS(200));
+        continue;
+      }
+      // Basic read validation to detect garbage reads
+      if (now.year() <= 2000 || now.hour() > 23 || now.minute() > 59) {
+        vTaskDelay(pdMS_TO_TICKS(200));
+        continue;
+      } 
       _hour24 = now.hour();
       _minute = now.minute();
       _second = now.second();
@@ -567,8 +646,20 @@ void Clock8Task(void *pvParameters)
       lastSwitchMillis = currentMillis;
       
       // Get time again for bottom section ensuring sync
-      DateTime now = rtc.now();
-
+      DateTime now;
+      if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(200))) {
+        now = rtc.now();
+        xSemaphoreGive(i2cMutex);
+      } else {
+        // I2C busy; back off and skip this update
+        vTaskDelay(pdMS_TO_TICKS(200));
+        continue;
+      }
+      // Basic read validation to detect garbage reads
+      if (now.year() <= 2000 || now.hour() > 23 || now.minute() > 59) {
+        vTaskDelay(pdMS_TO_TICKS(200));
+        continue;
+      } 
       // 1. Clear the bottom area
       dmd.drawFilledBox(0, 9, 31, 15, GRAPHICS_NOR);
 
@@ -626,7 +717,7 @@ void Clock8Task(void *pvParameters)
         sprintf(yearBuf, "%d", now.year());
 
         // >>> CONTROL: Set Position for Year <<<
-        int yearX = 4;
+        int yearX = 5;
         int yearY = 8;
         dmd.drawString(yearX, yearY, yearBuf, strlen(yearBuf), GRAPHICS_NORMAL);
 
