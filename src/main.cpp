@@ -2,8 +2,16 @@
 #include <Arduino.h>
 #include "functions/functions.h"
 
+// Define the global menu variables
+MenuState menuState = MENU_IDLE;
+int currentMenuItem = 0;
+int menuEditHH = 0;
+int menuEditMM = 0;
+int menuEditDD = 1;
+int menuEditMon = 1;
+int menuEditYY = 2024;
 // Pins
-#define UP_PIN 32       // The BOOT button
+#define UP_PIN 33       // The BOOT button
 #define DOWN_PIN 0     // The BOOT button
 #define RTC_POWERPIN 5 // The BOOT button
 
@@ -110,50 +118,60 @@ void loop()
   }
 
   // ==========================================
-  // BUTTON 33: MODE (Short) & WIFI (Long)
+  // BUTTON UP_PIN: MENU (Long) & NEXT/UP (Short)
   // ==========================================
-  static int lastState33 = HIGH;
-  static unsigned long pressStart33 = 0;
-  int currentState33 = digitalRead(UP_PIN);
-  // 1. Detect Press (Falling Edge)
-  if (lastState33 == HIGH && currentState33 == LOW)
-  {
-    pressStart33 = now;
-  }
-  // 2. Detect Release (Rising Edge)
-  if (lastState33 == LOW && currentState33 == HIGH)
-  {
-    unsigned long duration = now - pressStart33;
-    if (duration > 3000)wifimanager();
-    else if (duration > 50)modeChange();
-  }
-  lastState33 = currentState33;
-  // ==========================================
-  // BUTTON 32: BRIGHTNESS (Short Press)
-  // ==========================================
-
-  if(_hour24 >= 0 && _hour24 <= 7)
-    setBrightness(5);
-  else if(_hour24 >= 8 && _hour24 <= 23)
-    setBrightness(brightnessValues[brightnessIndex]);
+  static int lastStateUp = HIGH;
+  static unsigned long pressStartUp = 0;
+  int currentStateUp = digitalRead(UP_PIN);
   
-  static int lastState32 = HIGH;
-  static unsigned long pressStart32 = 0;
-  int currentState32 = digitalRead(DOWN_PIN);
-  // 1. Detect Press
-  if (lastState32 == HIGH && currentState32 == LOW)
-  {
-    pressStart32 = now;
+  if (lastStateUp == HIGH && currentStateUp == LOW) {
+      pressStartUp = now;
   }
-  // 2. Detect Release
-  if (lastState32 == LOW && currentState32 == HIGH)
-  {
-    unsigned long duration = now - pressStart32;
-    // Simple debounce (> 50ms)
-    if (duration > 50)bright();
+  if (lastStateUp == LOW && currentStateUp == HIGH) {
+      unsigned long duration = now - pressStartUp;
+      if (duration > 800) {
+          // Long Press: Toggle Menu
+          toggleMenu();
+      } else if (duration > 50) {
+          // Short Press
+          if (menuState != MENU_IDLE) {
+              menuUpPress();
+          } else {
+              modeChange(); // Normal clock operation
+          }
+      }
   }
+  lastStateUp = currentStateUp;
 
-  lastState32 = currentState32;
+  // ==========================================
+  // AUTO BRIGHTNESS
+  // ==========================================
+  if(_hour24 >= 0 && _hour24 <= 7)
+      setBrightness(5);
+  else if(_hour24 >= 8 && _hour24 <= 23)
+      setBrightness(brightnessValues[brightnessIndex]);
+
+  // ==========================================
+  // BUTTON DOWN_PIN: SELECT/DOWN (Short)
+  // ==========================================
+  static int lastStateDown = HIGH;
+  static unsigned long pressStartDown = 0;
+  int currentStateDown = digitalRead(DOWN_PIN);
+  
+  if (lastStateDown == HIGH && currentStateDown == LOW) {
+      pressStartDown = now;
+  }
+  if (lastStateDown == LOW && currentStateDown == HIGH) {
+      unsigned long duration = now - pressStartDown;
+      if (duration > 50) {
+          if (menuState != MENU_IDLE) {
+              menuDownPress();
+          } else {
+              bright(); // Normal clock operation
+          }
+      }
+  }
+  lastStateDown = currentStateDown;
   // Small delay to prevent CPU hogging and assist debounce
   vTaskDelay(pdMS_TO_TICKS(20));
 }

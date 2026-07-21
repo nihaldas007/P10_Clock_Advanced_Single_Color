@@ -760,3 +760,67 @@ void EventScrollTask(void *pvParameters)
       vTaskDelay(pdMS_TO_TICKS(1000));
   }
 }
+
+// ============================================================
+// FULL MENU SYSTEM TASK (Mode 100)
+// ============================================================
+const char* menuItems[] = {">WIFI", ">TIME", ">DATE", ">EXIT"};
+
+void MenuTask(void *pvParameters)
+{
+    int blinkCounter = 0;
+    while(1) {
+        dmd.drawFilledBox(0, 0, 31, 15, GRAPHICS_NOR); // clear screen
+        dmd.selectFont(SystemFont5x7); // 5x7 font + 1px gap = 6px per char. Max 5 chars per line!
+        
+        if (menuState == MENU_ROOT) {
+            dmd.drawString(0, 0, "MENU", 4, GRAPHICS_NORMAL);
+            dmd.drawString(0, 9, menuItems[currentMenuItem], strlen(menuItems[currentMenuItem]), GRAPHICS_NORMAL);
+        }
+        else if (menuState == MENU_TIME_HH || menuState == MENU_TIME_MM) {
+            dmd.drawString(0, 0, "TIME", 4, GRAPHICS_NORMAL);
+            char buf[8];
+            sprintf(buf, "%02d:%02d", menuEditHH, menuEditMM); // 5 chars
+            // Blinking effect for the field being edited
+            if (blinkCounter < 5) {
+                if (menuState == MENU_TIME_HH) {
+                    buf[0] = ' '; buf[1] = ' ';
+                } else {
+                    buf[3] = ' '; buf[4] = ' ';
+                }
+            }
+            dmd.drawString(0, 9, buf, strlen(buf), GRAPHICS_NORMAL);
+        }
+        else if (menuState == MENU_DATE_DD || menuState == MENU_DATE_MM || menuState == MENU_DATE_YY) {
+            char bufBot[8];
+            if (menuState == MENU_DATE_YY) {
+                dmd.drawString(0, 0, "YEAR", 4, GRAPHICS_NORMAL);
+                sprintf(bufBot, "%04d", menuEditYY); // 4 chars
+                if (blinkCounter < 5) { bufBot[0] = ' '; bufBot[1] = ' '; bufBot[2] = ' '; bufBot[3] = ' '; }
+                dmd.drawString(0, 9, bufBot, strlen(bufBot), GRAPHICS_NORMAL);
+            } else {
+                dmd.drawString(0, 0, "DATE", 4, GRAPHICS_NORMAL);
+                sprintf(bufBot, "%02d/%02d", menuEditDD, menuEditMon); // 5 chars
+                if (blinkCounter < 5) {
+                    if (menuState == MENU_DATE_DD) {
+                        bufBot[0] = ' '; bufBot[1] = ' ';
+                    } else {
+                        bufBot[3] = ' '; bufBot[4] = ' ';
+                    }
+                }
+                dmd.drawString(0, 9, bufBot, strlen(bufBot), GRAPHICS_NORMAL);
+            }
+        }
+        else if (menuState == MENU_WIFI) {
+            dmd.drawString(0, 0, "WIFI", 4, GRAPHICS_NORMAL);
+            if (blinkCounter < 5) {
+                dmd.drawString(0, 9, " AP ", 4, GRAPHICS_NORMAL);
+            }
+        }
+        
+        blinkCounter++;
+        if (blinkCounter >= 10) blinkCounter = 0;
+        
+        vTaskDelay(pdMS_TO_TICKS(100)); // Refresh menu UI at 10Hz
+    }
+}

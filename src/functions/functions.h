@@ -7,6 +7,31 @@
 #include <SPI.h>
 #include <time.h>
 #include <Preferences.h> // NEW: For saving settings
+
+// --- MENU SYSTEM ---
+enum MenuState {
+  MENU_IDLE = 0,
+  MENU_ROOT,
+  MENU_WIFI,
+  MENU_TIME_HH,
+  MENU_TIME_MM,
+  MENU_DATE_DD,
+  MENU_DATE_MM,
+  MENU_DATE_YY
+};
+extern MenuState menuState;
+extern int currentMenuItem;
+extern int menuEditHH;
+extern int menuEditMM;
+extern int menuEditDD;
+extern int menuEditMon;
+extern int menuEditYY;
+extern int brightnessIndex;
+
+extern void toggleMenu();
+extern void menuUpPress();
+extern void menuDownPress();
+
 #include "Clocks.h"
 
 // ------------------- Global Variables -------------------
@@ -110,6 +135,11 @@ void changeClockMode(int mode)
     {
         xTaskCreatePinnedToCore(EventScrollTask, "Event", 4096, NULL, 1, &clockTaskHandle, 1);
     }
+    else if (mode == 100)
+    {
+        extern void MenuTask(void *pvParameters);
+        xTaskCreatePinnedToCore(MenuTask, "Menu", 4096, NULL, 1, &clockTaskHandle, 1);
+    }
 
     // 4. Delete the old task safely
     if (oldTask != NULL)
@@ -176,7 +206,11 @@ void modeChange()
 
     preferences.putInt("mode", currentMode);
     Serial.println("Action: Switch Clock Mode");
-    changeClockMode(currentMode);
+    
+    // Only apply immediately if we are not in the menu system
+    if (menuState == MENU_IDLE) {
+        changeClockMode(currentMode);
+    }
 }
 void bright()
 {
@@ -195,6 +229,117 @@ void bright()
     }
         
 }
+
+// ------------------- WIFI AP MODE -------------------
+void startWiFiAPMode() {
+    Serial.println("Starting WiFi AP for configuration...");
+    WiFiManager wm;
+    wm.setConfigPortalTimeout(180); // 3 minutes timeout
+    // Blocks here while the AP is active
+    if (!wm.startConfigPortal("P10_CLOCK")) {
+        Serial.println("Failed to connect or hit timeout");
+    }
+    // Once done, restart
+    ESP.restart();
+}
+
+// ------------------- MENU SYSTEM LOGIC -------------------
+void toggleMenu() {
+    if (menuState == MENU_IDLE) {
+        menuState = MENU_ROOT;
+        currentMenuItem = 0;
+        changeClockMode(100); // 100 triggers MenuTask
+    } else {
+        menuState = MENU_IDLE;
+        changeClockMode(currentMode); // Restore current clock dial
+    }
+}
+
+void menuUpPress() {
+    if (menuState == MENU_ROOT) {
+        currentMenuItem++;
+        if (currentMenuItem > 3) currentMenuItem = 0; // 0=WIFI, 1=TIME, 2=DATE, 3=EXIT
+    }
+    else if (menuState == MENU_TIME_HH) {
+        menuState = MENU_TIME_MM; // Move to MM
+    }
+    else if (menuState == MENU_TIME_MM) {
+        // Save Time and Exit
+        if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(100))) {
+            DateTime now = rtc.now();
+            rtc.adjust(DateTime(now.year(), now.month(), now.day(), menuEditHH, menuEditMM, now.second()));
+            xSemaphoreGive(i2cMutex);
+        }
+        toggleMenu(); // Exit menu
+    }
+    else if (menuState == MENU_DATE_DD) {
+        menuState = MENU_DATE_MM; // Move to MM
+    }
+    else if (menuState == MENU_DATE_MM) {
+        menuState = MENU_DATE_YY; // Move to YY
+    }
+    else if (menuState == MENU_DATE_YY) {
+        // Save Date and Exit
+        if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(100))) {
+            DateTime now = rtc.now();
+            rtc.adjust(DateTime(menuEditYY, menuEditMon, menuEditDD, now.hour(), now.minute(), now.second()));
+            xSemaphoreGive(i2cMutex);
+        }
+        toggleMenu(); // Exit menu
+    }
+    else if (menuState == MENU_WIFI) {
+        menuState = MENU_ROOT; // Back to main menu
+    }
+}
+
+void menuDownPress() {
+    if (menuState == MENU_ROOT) {
+        if (currentMenuItem == 0) { // WiFi
+            menuState = MENU_WIFI;
+            startWiFiAPMode();
+        } else if (currentMenuItem == 1) { // Time
+            menuState = MENU_TIME_HH;
+            if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(100))) {
+                DateTime now = rtc.now();
+                menuEditHH = now.hour();
+                menuEditMM = now.minute();
+                xSemaphoreGive(i2cMutex);
+            }
+        } else if (currentMenuItem == 2) { // Date
+            menuState = MENU_DATE_DD;
+            if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(100))) {
+                DateTime now = rtc.now();
+                menuEditDD = now.day();
+                menuEditMon = now.month();
+                menuEditYY = now.year();
+                xSemaphoreGive(i2cMutex);
+            }
+        } else if (currentMenuItem == 3) { // Exit
+            toggleMenu();
+        }
+    }
+    else if (menuState == MENU_TIME_HH) {
+        menuEditHH++;
+        if (menuEditHH > 23) menuEditHH = 0;
+    }
+    else if (menuState == MENU_TIME_MM) {
+        menuEditMM++;
+        if (menuEditMM > 59) menuEditMM = 0;
+    }
+    else if (menuState == MENU_DATE_DD) {
+        menuEditDD++;
+        if (menuEditDD > 31) menuEditDD = 1;
+    }
+    else if (menuState == MENU_DATE_MM) {
+        menuEditMon++;
+        if (menuEditMon > 12) menuEditMon = 1;
+    }
+    else if (menuState == MENU_DATE_YY) {
+        menuEditYY++;
+        if (menuEditYY > 2099) menuEditYY = 2024;
+    }
+}
+
 void wifimanager()
 {
     Serial.println("Long Press: Entering WiFi Config Portal");
