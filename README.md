@@ -33,8 +33,8 @@ This project leverages **FreeRTOS** for smooth multi-tasking, ensuring zero disp
 | **PANEL_CLK (SCK)** | GPIO 18 | VSPI Shift Register Clock |
 | **PANEL_SCLK (Latch)** | GPIO 19 | Storage Register Latch Clock |
 | **PANEL_R_DATA** | GPIO 23 | VSPI Data Input (MOSI) |
-| **UP_PIN (Button 1)** | GPIO 0 | BOOT Button: Short = Cycle Mode, Long = Menu |
-| **DOWN_PIN (Btn 2)** | GPIO 33 | Brightness Button: Short = Cycle Level / Select |
+| **UP_PIN (Button 1)** | GPIO 32 | Up Button: Short = Cycle Mode, Long = Menu |
+| **DOWN_PIN (Btn 2)** | GPIO 33 | Down Button: Short = Cycle Level / Select |
 | **RTC_POWERPIN** | GPIO 5 | VCC power output line for RTC module |
 | **RTC SDA** | GPIO 21 | I2C Data line for DS3231 |
 | **RTC SCL** | GPIO 22 | I2C Clock line for DS3231 |
