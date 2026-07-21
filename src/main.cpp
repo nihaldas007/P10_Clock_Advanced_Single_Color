@@ -1,11 +1,11 @@
 //......................ESP32 only 1.0.6 Board (Preferred)............//
 #include <Arduino.h>
-#include "Clocks.h"
 #include "functions/functions.h"
+
 // Pins
 #define UP_PIN 32       // The BOOT button
-#define DOWN_PIN 33     // The BOOT button
-#define RTC_POWERPIN 26 // The BOOT button
+#define DOWN_PIN 0     // The BOOT button
+#define RTC_POWERPIN 5 // The BOOT button
 
 // ------------------- Setup -------------------
 void setup()
@@ -57,8 +57,8 @@ void setup()
     dmd.clearScreen(true);
     dmd.selectFont(SystemFont5x7);
     dmd.drawString(0, 4, "NO RTC", 6, GRAPHICS_NORMAL);
-    while (1)
-      ;
+    // while (1)
+    //   ;
   }
 
   if (rtc.lostPower())
@@ -76,6 +76,39 @@ void setup()
 void loop()
 {
   unsigned long now = millis();
+
+  // ==========================================
+  // EVENT TRIGGER CHECK (Uses EVENT_INTERVAL_MINUTES)
+  // ==========================================
+  static int lastEventMinute = -1;
+  static int minutesSinceLastTrigger = 9999; // Starts high to trigger immediately on special days
+
+  if (_second == 0 && _minute != lastEventMinute) {
+      lastEventMinute = _minute;
+      minutesSinceLastTrigger++;
+      
+      if (minutesSinceLastTrigger >= EVENT_INTERVAL_MINUTES) {
+          DateTime rtcNow;
+          if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(100))) {
+              rtcNow = rtc.now();
+              xSemaphoreGive(i2cMutex);
+              
+              if (rtcNow.year() > 2000) {
+                  for (int i = 0; i < numSpecialEvents; i++) {
+                      if (rtcNow.day() == specialEvents[i].day && rtcNow.month() == specialEvents[i].month) {
+                          currentEventMessage = specialEvents[i].message;
+                          Serial.print("Triggering Special Event: ");
+                          Serial.println(currentEventMessage);
+                          minutesSinceLastTrigger = 0; // Reset timer
+                          changeClockMode(99); // 99 triggers EventScrollTask
+                          break;
+                      }
+                  }
+              }
+          }
+      }
+  }
+
   // ==========================================
   // BUTTON 33: MODE (Short) & WIFI (Long)
   // ==========================================
@@ -103,6 +136,7 @@ void loop()
     setBrightness(5);
   else if(_hour24 >= 8 && _hour24 <= 23)
     setBrightness(brightnessValues[brightnessIndex]);
+  
   static int lastState32 = HIGH;
   static unsigned long pressStart32 = 0;
   int currentState32 = digitalRead(DOWN_PIN);

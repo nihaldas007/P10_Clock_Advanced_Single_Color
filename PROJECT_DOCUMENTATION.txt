@@ -1,0 +1,1238 @@
+================================================================================
+                    ESP32 ADVANCED P10 SINGLE COLOR LED CLOCK
+                       FULL DOCUMENTATION & IMPLEMENTATION
+================================================================================
+
+1. PROJECT OVERVIEW
+--------------------------------------------------------------------------------
+This project is an advanced, multi-mode digital clock system implemented on an 
+ESP32 microcontroller driving a 32x16 single-color P10 LED dot-matrix display panel.
+It utilizes FreeRTOS for multi-tasking, a DS3231 Real-Time Clock (RTC) chip over I2C 
+for battery-backed high-precision timekeeping, WiFiManager for captive portal WiFi 
+provisioning, NTP (Network Time Protocol) for automatic background time updates, 
+and non-volatile storage (NVS via Preferences) for persisting settings across power cycles.
+
+Key System Highlights:
+  - Dual-Core FreeRTOS Architecture: Display multiplexing runs on Core 1 at high priority (20);
+    active clock rendering runs on Core 1 at priority 1; background WiFi/NTP sync runs on Core 0.
+  - Dynamic Special Events System: Automatically checks for configured birthdays or anniversaries
+    and scrolls a full-screen message (e.g., "Happy Birthday Arpita") once every minute during the special day.
+  - Thread-Safe I2C Access: DS3231 RTC operations are serialized across tasks using FreeRTOS Mutex.
+  - 8 Interactive Clock Display Modes: Ranging from standard digital displays to animated rolling
+    seconds (slot-machine effect), scrolling date banners, and multi-state cycling views.
+  - Pulse Width Modulation (PWM) Brightness Control: 8-bit LEDC PWM on Output Enable (PANEL_OE pin).
+  - Automatic Night Dimming: Automatically drops brightness to minimal level (level 5) between
+    00:00 and 07:59.
+  - Interactive Button Controls: Single-button mode cycling, long-press WiFi AP setup, and 
+    3-level brightness adjustments.
+
+--------------------------------------------------------------------------------
+2. HARDWARE & PIN MAP
+--------------------------------------------------------------------------------
+Microcontroller: ESP32 (esp32dev)
+Display Panel: P10 Single Color LED Matrix (32 columns x 16 rows)
+RTC Module: DS3231 (I2C interface)
+
+Pin Connection Table:
++-------------------+---------------+------------------------------------------+
+| Function / Signal | ESP32 GPIO    | Description                              |
++-------------------+---------------+------------------------------------------+
+| PANEL_OE          | GPIO 4        | Active LOW Output Enable / LEDC PWM      |
+| PANEL_A           | GPIO 16       | Row Select Bit A                         |
+| PANEL_B           | GPIO 17       | Row Select Bit B                         |
+| PANEL_CLK (SCK)   | GPIO 18       | VSPI Shift Register Clock                |
+| PANEL_SCLK (Latch)| GPIO 19       | Storage Register Latch Clock             |
+| PANEL_R_DATA(MOSI)| GPIO 23       | VSPI Data Input to 74HC595 shift regs    |
+| UP_PIN (Button 1) | GPIO 0        | BOOT Button: Short = Mode, Long = WiFi   |
+| DOWN_PIN(Button 2)| GPIO 33       | Brightness Button: Short = Cycle Level   |
+| RTC_POWERPIN      | GPIO 5        | VCC power output line for RTC module     |
+| RTC SDA           | GPIO 21 (I2C) | I2C Data line for DS3231                 |
+| RTC SCL           | GPIO 22 (I2C) | I2C Clock line for DS3231                |
++-------------------+---------------+------------------------------------------+
+
+--------------------------------------------------------------------------------
+3. SOFTWARE ARCHITECTURE & FREERTOS TASKS
+--------------------------------------------------------------------------------
+The firmware is built using PlatformIO with the Arduino framework on ESP32 BSP 3.5.0.
+
+Tasks Summary:
+1. `refreshDisplay` (Core 1, Priority 20):
+   - High-priority display multiplexing loop.
+   - Invokes `dmd.scanDisplayBySPI()` every 1ms (`vTaskDelay(pdMS_TO_TICKS(1))`).
+   - Ensures zero display flickering regardless of clock animation computation load.
+
+2. `clockTaskHandle` / `ClockXTask` (Core 1, Priority 1):
+   - Dynamically created and deleted based on the selected clock mode (0 to 7).
+   - Draws time/date graphics into the DMD RAM frame buffer.
+
+3. `backgroundSyncTask` (Core 0, Priority 1):
+   - Infinite background loop running every 10 seconds (`vTaskDelay(pdMS_TO_TICKS(10000))`).
+   - Checks WiFi connection status (`WiFi.status() == WL_CONNECTED`).
+   - Fetches UTC+6 Bangladesh NTP time (`configTime` with `time.google.com`, `time.nist.gov`, `pool.ntp.org`).
+   - Safely updates DS3231 RTC under `i2cMutex` protection.
+   - Auto-reconnects (`WiFi.begin()`) if WiFi connection is dropped.
+
+4. `main loop()` (Core 1):
+   - Debounces UP_PIN (GPIO 0) and DOWN_PIN (GPIO 33).
+   - UP_PIN < 3000ms: Triggers `modeChange()`.
+   - UP_PIN > 3000ms: Triggers `wifimanager()` captive portal.
+   - DOWN_PIN < 50ms (press release): Triggers `bright()`.
+   - Night Dimming Check: Forces brightness to 5 if hour is between 00:00 and 07:59.
+
+--------------------------------------------------------------------------------
+4. DETAILED CLOCK MODES (Clock1 - Clock8)
+--------------------------------------------------------------------------------
+Mode 0 - Clock 1:
+  - Font: Font6x16 (6x16 pixels per character).
+  - Layout: Large 12-hour format HH:MM with blinking center colon dots (every 1 sec).
+
+Mode 1 - Clock 2:
+  - Font: Font12x6 (12x6 pixels per character).
+  - Layout: Medium 12-hour HH:MM with double colon dots blinking on even/odd seconds.
+
+Mode 2 - Clock 3 (Slot Machine Animated Seconds):
+  - Font: Font5x7Nbox for HH:MM; Font12x6 for animated seconds.
+  - Layout: HH:MM stacked vertically on the left side (x=3).
+  - Animation: Smooth 15-frame vertical slot-machine scrolling for individual digits 
+    (tens and units) of seconds on the right side (x=18 and x=25).
+
+Mode 3 - Clock 4:
+  - Font: Font5x7Nbox for time & date; System5x7 for weekday name.
+  - Layout: Top row HH:MM with blinking colon; bottom row 3-letter weekday ("MON") 
+    + 2-digit day of month ("22").
+
+Mode 4 - Clock 5 (Full Date & Time with AM/PM):
+  - Font: Font5x10Nbox for numbers, SystemFont3x5 for AM/PM ('A'/'P') and bottom row.
+  - Layout: Top row HH:MM with blinking colon + 'A'/'P' indicator at top-right; 
+    bottom row DD.MM + 3-letter weekday ("MON").
+
+Mode 5 - Clock 6 (Vertical Split Layout):
+  - Font: Font5x7Nbox for numbers, System5x7 for month name.
+  - Layout: Left side vertical HH (top) and MM (bottom); vertical divider line at x=13; 
+    right side 3-letter month ("DEC") and 2-digit day ("22").
+
+Mode 6 - Clock 7 (Marquee Date Banner):
+  - Font: Font5x7Nbox for time, System5x7 for scrolling text.
+  - Layout: Top row static HH:MM with blinking colon; bottom row smooth horizontal 
+    scrolling marquee displaying full date string (e.g., "Sunday 22-December 2025").
+
+Mode 7 - Clock 8 (Tri-State Information Switcher):
+  - Font: Font5x7Nbox and System5x7.
+  - Layout: Top row static HH:MM with blinking colon; bottom row switches every 2 seconds:
+    * State 0: 3-letter Weekday ("MON")
+    * State 1: 2-digit Day + 3-letter Month ("22 DEC")
+    * State 2: 4-digit Year ("2025")
+
+Mode 99 - Dynamic Event Scroll (Interrupt Task):
+  - Triggered automatically at the top of every minute when today's date matches an entry in `src/events.h`.
+  - Interrupts the current clock task, clears the display, and smoothly scrolls the configured message
+    (e.g., "Happy Birthday Arpita !!") across the full screen.
+  - Automatically restores the previous clock mode upon completion.
+
+--------------------------------------------------------------------------------
+5. PERISTENCE & CONFIGURATION MANAGEMENT
+--------------------------------------------------------------------------------
+The system uses the ESP32 NVS (Non-Volatile Storage) via the `Preferences` library 
+under the namespace `"clock-app"`:
+  - Key `"mode"`: Stores `currentMode` (integer 0 to 7).
+  - Key `"brightIdx"`: Stores `brightnessIndex` (integer 0 to 2, mapping to PWM levels 5, 30, 50).
+Settings are automatically restored upon reboot in `setup()`.
+
+--------------------------------------------------------------------------------
+6. DYNAMIC SPECIAL EVENTS (events.h)
+--------------------------------------------------------------------------------
+A dedicated header file `src/events.h` manages dynamic full-screen scroll events.
+You can easily add, remove, or modify events. The system checks this list against the 
+current RTC date using your configured time interval.
+
+Example Configuration:
+```cpp
+// 1 = every minute, 30 = every 30 mins, 60 = every 1 hour, 120 = every 2 hours
+const int EVENT_INTERVAL_MINUTES = 60; 
+
+// Scroll speed (lower is faster). 20 = Fast, 40 = Normal, 80 = Slow
+const int EVENT_SCROLL_SPEED_MS = 40; 
+
+SpecialEvent specialEvents[] = {
+    {22, 7, "Happy Birthday Arpita !!"},     // Scrolls on July 22
+    {15, 8, "Happy Anniversary Mom & Dad"},  // Scrolls on August 15
+    {1, 1, "Happy New Year !!"}              // Scrolls on January 1
+};
+```
+If you wish to disable the feature entirely, simply leave the array empty:
+```cpp
+SpecialEvent specialEvents[] = {};
+```
+
+--------------------------------------------------------------------------------
+6. COMPLETE SOURCE CODE LISTING
+--------------------------------------------------------------------------------
+
+================================================================================
+FILE: platformio.ini
+================================================================================
+; PlatformIO Project Configuration File
+[env:esp32dev]
+platform = espressif32@3.5.0
+board = esp32dev
+framework = arduino
+monitor_speed = 115200
+upload_speed = 921600
+board_build.partitions = custom_partitions.csv
+monitor_filters = esp32_exception_decoder
+lib_deps = 
+	tzapu/WiFiManager@^2.0.15
+	adafruit/RTClib@^2.1.4
+
+================================================================================
+FILE: custom_partitions.csv
+================================================================================
+# Name,   Type, SubType, Offset,  Size, Flags
+nvs,data,nvs,0x9000,0x5000,
+factory,app,factory,0x10000,0x3E0000,
+coredump,data,coredump,0x3F0000,0x10000,
+
+================================================================================
+FILE: src/main.cpp
+================================================================================
+//......................ESP32 only 1.0.6 Board (Preferred)............//
+#include <Arduino.h>
+#include "Clocks.h"
+#include "functions/functions.h"
+// Pins
+#define UP_PIN 0       // The BOOT button
+#define DOWN_PIN 33     // The BOOT button
+#define RTC_POWERPIN 5 // The BOOT button
+
+// ------------------- Setup -------------------
+void setup()
+{
+  Serial.begin(115200);
+  pinMode(UP_PIN, INPUT_PULLUP);
+  pinMode(DOWN_PIN, INPUT_PULLUP);
+  pinMode(RTC_POWERPIN, OUTPUT);
+  digitalWrite(RTC_POWERPIN, HIGH);
+  delay(500);
+  // 1. Init Preferences
+  preferences.begin("clock-app", false);                // RESTORE MODE
+  currentMode = preferences.getInt("mode", 0);          // RESTORE BRIGHTNESS (NEW)
+  brightnessIndex = preferences.getInt("brightIdx", 0); // Safety check: ensure index is 0-2
+  if (brightnessIndex < 0 || brightnessIndex > 2)
+    brightnessIndex = 0;
+
+  Serial.print("Restored Mode: ");
+  Serial.println(currentMode);
+  Serial.print("Restored Brightness: ");
+  Serial.println(brightnessValues[brightnessIndex]);
+
+  // 2. PWM & Brightness
+  pinMode(PANEL_OE, OUTPUT);
+  ledcSetup(PWM_CHANNEL, PWM_FREQ, PWM_RES);
+  ledcAttachPin(PANEL_OE, PWM_CHANNEL);
+
+  // Apply the restored brightness immediately
+  setBrightness(brightnessValues[brightnessIndex]);
+
+  // 3. Start Display Refresh
+  xTaskCreatePinnedToCore(refreshDisplay, "refreshDisplay", 4096, NULL, 20, &refreshTaskHandle, 1);
+
+  // 4. Initialize RTC
+  Wire.begin();
+
+  // Create I2C mutex to serialize all Wire/RTC usage (prevents heap corruption)
+  i2cMutex = xSemaphoreCreateMutex();
+  if (i2cMutex == NULL)
+  {
+    Serial.println("ERROR: Failed to create I2C mutex");
+    while (1)
+      vTaskDelay(pdMS_TO_TICKS(1000));
+  }
+
+  if (!rtc.begin())
+  {
+    Serial.println("Couldn't find RTC");
+    dmd.clearScreen(true);
+    dmd.selectFont(SystemFont5x7);
+    dmd.drawString(0, 4, "NO RTC", 6, GRAPHICS_NORMAL);
+  }
+
+  if (rtc.lostPower())
+  {
+    Serial.println("RTC lost power, setting compile time");
+    rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
+  }
+  // 4. clear screen
+  dmd.clearScreen(true);
+  // 5. Start the saved clock mode
+  changeClockMode(currentMode);
+  // 6. WiFi Manager
+  xTaskCreatePinnedToCore(backgroundSyncTask, "bkSync", 8192, NULL, 1, &ntpTaskHandle, 0);
+}
+
+void loop()
+{
+  unsigned long now = millis();
+  // ==========================================
+  // BUTTON 33: MODE (Short) & WIFI (Long)
+  // ==========================================
+  static int lastState33 = HIGH;
+  static unsigned long pressStart33 = 0;
+  int currentState33 = digitalRead(UP_PIN);
+  // 1. Detect Press (Falling Edge)
+  if (lastState33 == HIGH && currentState33 == LOW)
+  {
+    pressStart33 = now;
+  }
+  // 2. Detect Release (Rising Edge)
+  if (lastState33 == LOW && currentState33 == HIGH)
+  {
+    unsigned long duration = now - pressStart33;
+    if (duration > 3000)wifimanager();
+    else if (duration > 50)modeChange();
+  }
+  lastState33 = currentState33;
+  // ==========================================
+  // BUTTON 32: BRIGHTNESS (Short Press)
+  // ==========================================
+
+  if(_hour24 >= 0 && _hour24 <= 7)
+    setBrightness(5);
+  else if(_hour24 >= 8 && _hour24 <= 23)
+    setBrightness(brightnessValues[brightnessIndex]);
+  static int lastState32 = HIGH;
+  static unsigned long pressStart32 = 0;
+  int currentState32 = digitalRead(DOWN_PIN);
+  // 1. Detect Press
+  if (lastState32 == HIGH && currentState32 == LOW)
+  {
+    pressStart32 = now;
+  }
+  // 2. Detect Release
+  if (lastState32 == LOW && currentState32 == HIGH)
+  {
+    unsigned long duration = now - pressStart32;
+    // Simple debounce (> 50ms)
+    if (duration > 50)bright();
+  }
+
+  lastState32 = currentState32;
+  // Small delay to prevent CPU hogging and assist debounce
+  vTaskDelay(pdMS_TO_TICKS(20));
+}
+
+================================================================================
+FILE: src/functions/functions.h
+================================================================================
+#pragma once
+#include <Arduino.h>
+#include <DMD32.h>
+#include <RTClib.h>
+#include <WiFi.h>
+#include <WiFiManager.h>
+#include <SPI.h>
+#include <time.h>
+#include <Preferences.h>
+#include "Clocks.h"
+
+// ------------------- Global Variables -------------------
+Preferences preferences;
+
+// Panel OE / Brightness
+const int PANEL_OE = 4;
+const int PWM_CHANNEL = 0;
+const int PWM_FREQ = 1000;
+const int PWM_RES = 8;
+
+int brightnessIndex = 0;              // 0=Low, 1=Mid, 2=High
+int brightnessValues[] = {5, 30, 50}; // Brightness levels
+int clickCount = 0;                   
+unsigned long lastClickTime = 0;      
+const int DOUBLE_CLICK_GAP = 400;     
+
+// FreeRTOS task handles
+TaskHandle_t refreshTaskHandle = NULL;
+TaskHandle_t clockTaskHandle = NULL;
+TaskHandle_t ntpTaskHandle = NULL;
+SemaphoreHandle_t i2cMutex = NULL;
+
+// Forward Declarations
+void Clock1Task(void *pvParameters);
+void Clock2Task(void *pvParameters);
+void Clock3Task(void *pvParameters);
+void Clock4Task(void *pvParameters);
+void Clock5Task(void *pvParameters);
+void Clock6Task(void *pvParameters);
+void Clock7Task(void *pvParameters);
+void Clock8Task(void *pvParameters);
+bool myGetLocalTime(struct tm *timeinfo);
+void changeClockMode(int mode);
+void backgroundSyncTask(void *pvParameters);
+void bright();
+void wifimanager();
+void modeChange();
+
+// ------------------- Refresh Task -------------------
+void refreshDisplay(void *pvParameters)
+{
+    for (;;)
+    {
+        dmd.scanDisplayBySPI();
+        vTaskDelay(pdMS_TO_TICKS(1));
+    }
+}
+
+// ------------------- Brightness -------------------
+void setBrightness(int level)
+{
+    level = constrain(level, 0, 255);
+    ledcWrite(PWM_CHANNEL, map(level, 0, 255, 0, (1 << PWM_RES) - 1));
+}
+
+// ------------------- Helper: Switch Clock Mode -------------------
+void changeClockMode(int mode)
+{
+    if (clockTaskHandle != NULL)
+    {
+        vTaskDelete(clockTaskHandle);
+        clockTaskHandle = NULL;
+    }
+
+    dmd.clearScreen(true);
+
+    if (mode == 0)
+    {
+        xTaskCreatePinnedToCore(Clock1Task, "Clock1", 4096, NULL, 1, &clockTaskHandle, 1);
+    }
+    else if (mode == 1)
+    {
+        xTaskCreatePinnedToCore(Clock2Task, "Clock2", 4096, NULL, 1, &clockTaskHandle, 1);
+    }
+    else if (mode == 2)
+    {
+        xTaskCreatePinnedToCore(Clock3Task, "Clock3", 4096, NULL, 1, &clockTaskHandle, 1);
+    }
+    else if (mode == 3)
+    {
+        xTaskCreatePinnedToCore(Clock4Task, "Clock4", 4096, NULL, 1, &clockTaskHandle, 1);
+    }
+    else if (mode == 4)
+    {
+        xTaskCreatePinnedToCore(Clock5Task, "Clock5", 4096, NULL, 1, &clockTaskHandle, 1);
+    }
+    else if (mode == 5)
+    {
+        xTaskCreatePinnedToCore(Clock6Task, "Clock6", 4096, NULL, 1, &clockTaskHandle, 1);
+    }
+    else if (mode == 6)
+    {
+        xTaskCreatePinnedToCore(Clock7Task, "Clock7", 4096, NULL, 1, &clockTaskHandle, 1);
+    }
+    else if (mode == 7)
+    {
+        xTaskCreatePinnedToCore(Clock8Task, "Clock8", 4096, NULL, 1, &clockTaskHandle, 1);
+    }
+}
+
+// ------------------- BACKGROUND WIFI/NTP TASK -------------------
+void backgroundSyncTask(void *pvParameters)
+{
+    configTime(gmtOffset_sec, daylightOffset_sec, ntpServer1, ntpServer2, ntpServer3);
+    WiFi.mode(WIFI_STA);
+
+    for (;;)
+    {
+        if (WiFi.status() == WL_CONNECTED)
+        {
+            struct tm timeinfo;
+            Serial.println("[Background] WiFi Connected. Fetching NTP...");
+            if (getLocalTime(&timeinfo, 200))
+            {
+                if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(500)))
+                {
+                    rtc.adjust(DateTime(timeinfo.tm_year + 1900, timeinfo.tm_mon + 1, timeinfo.tm_mday,
+                                        timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec));
+                    xSemaphoreGive(i2cMutex);
+                    Serial.println("[Background] WiFi OK. RTC Updated.");
+                }
+                else
+                {
+                    Serial.println("[Background] I2C busy: skipping RTC update.");
+                }
+            }
+        }
+        else
+        {
+            Serial.println("[Background] WiFi lost! Attempting Reconnect...");
+            WiFi.begin();
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(10000));
+    }
+}
+
+void modeChange()
+{
+    currentMode++;
+    if (currentMode > 7)
+        currentMode = 0;
+
+    preferences.putInt("mode", currentMode);
+    Serial.println("Action: Switch Clock Mode");
+    changeClockMode(currentMode);
+}
+
+void bright()
+{
+    brightnessIndex++;
+    if (brightnessIndex > 2)
+        brightnessIndex = 0;
+
+    int newLevel = brightnessValues[brightnessIndex];
+    setBrightness(newLevel);
+
+    preferences.putInt("brightIdx", brightnessIndex);
+    Serial.print("Action: Brightness Level ");
+    Serial.println(newLevel);
+    if (newLevel != 5){
+        if(_hour24 >= 0 && _hour24 <= 7)vTaskDelay(pdMS_TO_TICKS(1000));
+    }
+}
+
+void wifimanager()
+{
+    Serial.println("Long Press: Entering WiFi Config Portal");
+
+    if (clockTaskHandle != NULL)
+        vTaskDelete(clockTaskHandle);
+    if (ntpTaskHandle != NULL)
+        vTaskDelete(ntpTaskHandle);
+
+    dmd.clearScreen(true);
+    dmd.selectFont(SystemFont5x7);
+    dmd.drawString(5, 0, "WIFI", 4, GRAPHICS_NORMAL);
+    dmd.drawString(1, 8, "SETUP", 5, GRAPHICS_NORMAL);
+
+    WiFiManager wm;
+    wm.setClass("invert");
+    wm.setTitle("Setup WiFi");
+    wm.setConnectTimeout(20);
+
+    const char *customHead = "<style>body{background:#e0ffe0;}button{background-color:red !important;}</style>";
+    wm.setCustomHeadElement(customHead);
+
+    std::vector<const char *> menu = {"wifi", "restart", "exit"};
+    wm.setMenu(menu);
+    wm.setConfigPortalTimeout(120);
+
+    if (!wm.startConfigPortal("Smart Clock"))
+    {
+        Serial.println("Setup timed out");
+    }
+    else
+    {
+        Serial.println("WiFi Saved");
+    }
+    ESP.restart();
+}
+
+================================================================================
+FILE: src/Clocks.h
+================================================================================
+#pragma once
+
+#include <Arduino.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
+#include <DMD32.h>
+#include <SPI.h>
+#include <time.h>
+#include <RTClib.h>
+
+#include "fonts/SystemFont5x7.h"
+#include "fonts/Font_12x6.h"
+#include "fonts/Font5x7Nbox.h"
+#include "fonts/Font5x7NboxC.h"
+#include "fonts/Font6x16.h"
+#include "fonts/SystemFont3x5.h"
+#include "fonts/Font5x10Nbox.h"
+#include "fonts/Font5x10Sbox.h"
+
+DMD dmd(1, 1);
+RTC_DS3231 rtc;
+
+int _hour12, _hour24, _minute, _second;
+int currentMode = 0;
+
+const long gmtOffset_sec = 6 * 3600;
+const int daylightOffset_sec = 0;
+
+const char *ntpServer1 = "time.google.com";
+const char *ntpServer2 = "time.nist.gov";
+const char *ntpServer3 = "pool.ntp.org";
+extern SemaphoreHandle_t i2cMutex;
+
+bool myGetLocalTime(struct tm *timeinfo)
+{
+  return getLocalTime(timeinfo, 100);
+}
+
+// --- Clock 1 ---
+void Clock1Task(void *pvParameters)
+{
+  const long interval = 1000;
+  unsigned long previousMillis = 0;
+  char hr_24[3], mn[3];
+
+  for (;;)
+  {
+    unsigned long currentMillis = millis();
+    if (currentMillis - previousMillis >= interval)
+    {
+      previousMillis = currentMillis;
+
+      DateTime now;
+      if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(200))) {
+        now = rtc.now();
+        xSemaphoreGive(i2cMutex);
+      } else {
+        vTaskDelay(pdMS_TO_TICKS(200));
+        continue;
+      }
+      if (now.year() <= 2000 || now.hour() > 23 || now.minute() > 59) {
+        vTaskDelay(pdMS_TO_TICKS(200));
+        continue;
+      }
+      _hour24 = now.hour();
+      _minute = now.minute();
+      _second = now.second();
+
+      dmd.selectFont(Font6x16);
+      _hour12 = _hour24 % 12;
+      if (_hour12 == 0)
+        _hour12 = 12;
+
+      sprintf(hr_24, "%02d", _hour12);
+      dmd.drawString(1, 0, hr_24, 2, GRAPHICS_NORMAL);
+
+      sprintf(mn, "%02d", _minute);
+      dmd.drawString(18, 0, mn, 2, GRAPHICS_NORMAL);
+
+      if (_second % 2 == 0)
+      {
+        dmd.drawFilledBox(15, 2, 16, 3, GRAPHICS_OR);
+        dmd.drawFilledBox(15, 12, 16, 13, GRAPHICS_OR);
+      }
+      else
+      {
+        dmd.drawFilledBox(15, 2, 16, 3, GRAPHICS_NOR);
+        dmd.drawFilledBox(15, 12, 16, 13, GRAPHICS_NOR);
+      }
+    }
+    vTaskDelay(pdMS_TO_TICKS(50));
+  }
+}
+
+// --- Clock 2 ---
+void Clock2Task(void *pvParameters)
+{
+  const long interval = 1000;
+  unsigned long previousMillis = 0;
+  char hr_24[3], mn[3];
+
+  for (;;)
+  {
+    unsigned long currentMillis = millis();
+    if (currentMillis - previousMillis >= interval)
+    {
+      previousMillis = currentMillis;
+
+      DateTime now;
+      if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(200))) {
+        now = rtc.now();
+        xSemaphoreGive(i2cMutex);
+      } else {
+        vTaskDelay(pdMS_TO_TICKS(200));
+        continue;
+      }
+      if (now.year() <= 2000 || now.hour() > 23 || now.minute() > 59) {
+        vTaskDelay(pdMS_TO_TICKS(200));
+        continue;
+      }
+      _hour24 = now.hour();
+      _minute = now.minute();
+      _second = now.second();
+
+      dmd.selectFont(Font12x6);
+
+      _hour12 = _hour24 % 12;
+      if (_hour12 == 0)
+        _hour12 = 12;
+
+      sprintf(hr_24, "%02d", _hour12);
+      dmd.drawString(1, 2, hr_24, 2, GRAPHICS_NORMAL);
+
+      sprintf(mn, "%02d", _minute);
+      dmd.drawString(18, 2, mn, 2, GRAPHICS_NORMAL);
+
+      if (_second % 2 == 0)
+      {
+        dmd.drawFilledBox(15, 4, 16, 5, GRAPHICS_OR);
+        dmd.drawFilledBox(15, 10, 16, 11, GRAPHICS_OR);
+      }
+      else
+      {
+        dmd.drawFilledBox(15, 4, 16, 5, GRAPHICS_NOR);
+        dmd.drawFilledBox(15, 10, 16, 11, GRAPHICS_NOR);
+      }
+    }
+    vTaskDelay(pdMS_TO_TICKS(50));
+  }
+}
+
+// --- Clock 3 (Slot Machine Animation) ---
+void Clock3Task(void *pvParameters)
+{
+  char hr_24[3], mn[3];
+  char tens_str[2], units_str[2];
+
+  int last_second = -1;
+
+  const int fontHeight = 12;
+  const int secX_Tens = 18;
+  const int secX_Units = 25;
+  const int secY = 2;
+  const int gap = 2;
+
+  for (;;)
+  {
+    DateTime now;
+    if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(200))) {
+      now = rtc.now();
+      xSemaphoreGive(i2cMutex);
+    } else {
+      vTaskDelay(pdMS_TO_TICKS(500));
+      continue;
+    }
+    if (now.year() <= 2000 || now.hour() > 23 || now.minute() > 59)
+    {
+      vTaskDelay(pdMS_TO_TICKS(500));
+      continue;
+    }
+
+    _second = now.second();
+
+    if (_second != last_second)
+    {
+      _hour24 = now.hour();
+      _minute = now.minute();
+
+      dmd.selectFont(Font5x7Nbox);
+      _hour12 = _hour24 % 12;
+      if (_hour12 == 0)
+        _hour12 = 12;
+      sprintf(hr_24, "%02d", _hour12);
+      sprintf(mn, "%02d", _minute);
+
+      dmd.drawString(3, -1, hr_24, 2, GRAPHICS_NORMAL);
+      dmd.drawString(3, 8, mn, 2, GRAPHICS_NORMAL);
+      dmd.drawFilledBox(15, 4, 16, 5, GRAPHICS_OR);
+      dmd.drawFilledBox(15, 10, 16, 11, GRAPHICS_OR);
+
+      int new_tens = _second / 10;
+      int new_units = _second % 10;
+
+      int old_tens = (last_second == -1) ? new_tens : last_second / 10;
+      int old_units = (last_second == -1) ? new_units : last_second % 10;
+
+      int clearStart_X;
+
+      dmd.selectFont(Font12x6);
+
+      if (new_tens == old_tens)
+      {
+        sprintf(tens_str, "%d", new_tens);
+        dmd.drawString(secX_Tens, secY, tens_str, 1, GRAPHICS_NORMAL);
+        clearStart_X = secX_Units;
+      }
+      else
+      {
+        clearStart_X = secX_Tens;
+      }
+
+      for (int i = 0; i <= fontHeight + gap; i++)
+      {
+        dmd.drawFilledBox(clearStart_X, 0, 31, 15, GRAPHICS_NOR);
+
+        dmd.selectFont(Font12x6);
+
+        if (new_tens != old_tens)
+        {
+          sprintf(tens_str, "%d", old_tens);
+          dmd.drawString(secX_Tens, secY - i, tens_str, 1, GRAPHICS_OR);
+
+          sprintf(tens_str, "%d", new_tens);
+          dmd.drawString(secX_Tens, (secY + fontHeight + gap) - i, tens_str, 1, GRAPHICS_OR);
+        }
+
+        sprintf(units_str, "%d", old_units);
+        dmd.drawString(secX_Units, secY - i, units_str, 1, GRAPHICS_OR);
+
+        sprintf(units_str, "%d", new_units);
+        dmd.drawString(secX_Units, (secY + fontHeight + gap) - i, units_str, 1, GRAPHICS_OR);
+
+        vTaskDelay(pdMS_TO_TICKS(60));
+      }
+
+      last_second = _second;
+    }
+    vTaskDelay(pdMS_TO_TICKS(10));
+  }
+}
+
+// --- Clock 4 ---
+void Clock4Task(void *pvParameters)
+{
+  const long interval = 1000;
+  unsigned long previousMillis = 0;
+  char hr_24[3], mn[3], dateStr[3];
+  const char *dayNames[] = {"SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"};
+
+  for (;;)
+  {
+    unsigned long currentMillis = millis();
+    if (currentMillis - previousMillis >= interval)
+    {
+      previousMillis = currentMillis;
+
+      DateTime now = rtc.now();
+      _hour24 = now.hour();
+      _minute = now.minute();
+      _second = now.second();
+
+      dmd.selectFont(Font5x7Nbox);
+      _hour12 = _hour24 % 12;
+      if (_hour12 == 0)
+        _hour12 = 12;
+
+      sprintf(hr_24, "%02d", _hour12);
+      dmd.drawString(3, -1, hr_24, 2, GRAPHICS_NORMAL);
+
+      sprintf(mn, "%02d", _minute);
+      dmd.drawString(18, -1, mn, 2, GRAPHICS_NORMAL);
+
+      if (_second % 2 == 0)
+      {
+        dmd.drawFilledBox(15, 1, 16, 2, GRAPHICS_OR);
+        dmd.drawFilledBox(15, 4, 16, 5, GRAPHICS_OR);
+      }
+      else
+      {
+        dmd.drawFilledBox(15, 1, 16, 2, GRAPHICS_NOR);
+        dmd.drawFilledBox(15, 4, 16, 5, GRAPHICS_NOR);
+      }
+
+      dmd.selectFont(System5x7);
+      dmd.drawString(0, 9, dayNames[now.dayOfTheWeek()], 3, GRAPHICS_NORMAL);
+
+      dmd.selectFont(Font5x7Nbox);
+      sprintf(dateStr, "%02d", now.day());
+      dmd.drawString(20, 8, dateStr, 2, GRAPHICS_NORMAL);
+    }
+    vTaskDelay(pdMS_TO_TICKS(50));
+  }
+}
+
+// --- Clock 5 ---
+void Clock5Task(void *pvParameters)
+{
+  const long interval = 1000;
+  unsigned long previousMillis = 0;
+  char hr_24[3], mn[3], date[3], month[3];
+  const char *dayNames[] = {"SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"};
+
+  for (;;)
+  {
+    unsigned long currentMillis = millis();
+    if (currentMillis - previousMillis >= interval)
+    {
+      previousMillis = currentMillis;
+
+      DateTime now;
+      if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(200))) {
+        now = rtc.now();
+        xSemaphoreGive(i2cMutex);
+      } else {
+        vTaskDelay(pdMS_TO_TICKS(200));
+        continue;
+      }
+      if (now.year() <= 2000 || now.hour() > 23 || now.minute() > 59) {
+        vTaskDelay(pdMS_TO_TICKS(200));
+        continue;
+      }
+      _hour24 = now.hour();
+      _minute = now.minute();
+      _second = now.second();
+
+      dmd.selectFont(Font5x10Nbox);
+      _hour12 = _hour24 % 12;
+      if (_hour12 == 0)
+        _hour12 = 12;
+
+      sprintf(hr_24, "%02d", _hour12);
+      dmd.drawString(0, 0, hr_24, 2, GRAPHICS_NORMAL);
+
+      sprintf(mn, "%02d", _minute);
+      dmd.drawString(15, 0, mn, 2, GRAPHICS_NORMAL);
+
+      dmd.selectFont(SystemFont3x5);
+      if (_hour24 >= 12)
+      {
+        dmd.drawString(27, 3, "P", 1, GRAPHICS_NORMAL);
+      }
+      else
+      {
+        dmd.drawString(28, 3, "A", 1, GRAPHICS_NORMAL);
+      }
+
+      if (_second % 2 == 0)
+      {
+        dmd.drawFilledBox(12, 1, 13, 2, GRAPHICS_OR);
+        dmd.drawFilledBox(12, 7, 13, 8, GRAPHICS_OR);
+      }
+      else
+      {
+        dmd.drawFilledBox(12, 1, 13, 2, GRAPHICS_NOR);
+        dmd.drawFilledBox(12, 7, 13, 8, GRAPHICS_NOR);
+      }
+
+      dmd.selectFont(SystemFont3x5);
+
+      sprintf(date, "%02d", now.day());
+      dmd.drawString(0, 11, date, 3, GRAPHICS_NORMAL);
+
+      dmd.drawFilledBox(8, 15, 8, 15, GRAPHICS_OR);
+
+      sprintf(month, "%02d", now.month());
+      dmd.drawString(10, 11, month, 3, GRAPHICS_NORMAL);
+
+      dmd.drawString(21, 11, dayNames[now.dayOfTheWeek()], 3, GRAPHICS_NORMAL);
+    }
+    vTaskDelay(pdMS_TO_TICKS(50));
+  }
+}
+
+// --- Clock 6 ---
+void Clock6Task(void *pvParameters)
+{
+  const long interval = 1000;
+  unsigned long previousMillis = 0;
+  char hr_24[3], mn[3], dateStr[3];
+  const char *monthNames[] = {"JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"};
+
+  for (;;)
+  {
+    unsigned long currentMillis = millis();
+    if (currentMillis - previousMillis >= interval)
+    {
+      previousMillis = currentMillis;
+
+      DateTime now;
+      if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(200))) {
+        now = rtc.now();
+        xSemaphoreGive(i2cMutex);
+      } else {
+        vTaskDelay(pdMS_TO_TICKS(200));
+        continue;
+      }
+      if (now.year() <= 2000 || now.hour() > 23 || now.minute() > 59) {
+        vTaskDelay(pdMS_TO_TICKS(200));
+        continue;
+      }
+      _hour24 = now.hour();
+      _minute = now.minute();
+      
+      dmd.selectFont(Font5x7Nbox);
+      _hour12 = _hour24 % 12;
+      if (_hour12 == 0)
+        _hour12 = 12;
+
+      sprintf(hr_24, "%02d", _hour12);
+      dmd.drawString(0, -1, hr_24, 2, GRAPHICS_NORMAL);
+
+      sprintf(mn, "%02d", _minute);
+      dmd.drawString(0, 8, mn, 2, GRAPHICS_NORMAL);
+
+      dmd.selectFont(System5x7);
+      dmd.drawFilledBox(13, 0, 13, 15, GRAPHICS_OR);
+
+      dmd.drawString(15, 0, monthNames[now.month() - 1], 3, GRAPHICS_NORMAL);
+
+      dmd.selectFont(Font5x7Nbox);
+      sprintf(dateStr, "%02d", now.day());
+      dmd.drawString(18, 8, dateStr, 2, GRAPHICS_NORMAL);
+    }
+    vTaskDelay(pdMS_TO_TICKS(50));
+  }
+}
+
+// --- Clock 7 ---
+void Clock7Task(void* pvParameters) {
+  const long interval = 1000;       
+  const long scrollInterval = 100;  
+  unsigned long previousMillis = 0;
+  unsigned long lastScrollMillis = 0;
+
+  char hr_24[3], mn[3];
+  char dateScrollBuffer[80];
+
+  int scrollX = 32;     
+  int textWidth = 0;    
+  int currentDay = -1;  
+
+  const char* fullDayNames[] = {
+    "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"
+  };
+  const char* fullMonthNames[] = {
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December"
+  };
+
+  for (;;) {
+    unsigned long currentMillis = millis();
+
+    if (currentMillis - previousMillis >= interval) {
+      previousMillis = currentMillis;
+
+      DateTime now;
+      if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(200))) {
+        now = rtc.now();
+        xSemaphoreGive(i2cMutex);
+      } else {
+        vTaskDelay(pdMS_TO_TICKS(200));
+        continue;
+      }
+      if (now.year() <= 2000 || now.hour() > 23 || now.minute() > 59) {
+        vTaskDelay(pdMS_TO_TICKS(200));
+        continue;
+      }
+      _hour24 = now.hour();
+      _minute = now.minute();
+      _second = now.second();
+
+      if (now.day() != currentDay) {
+        currentDay = now.day();
+        sprintf(dateScrollBuffer, "%s %02d-%s %d",
+                fullDayNames[now.dayOfTheWeek()],
+                now.day(),
+                fullMonthNames[now.month() - 1], 
+                now.year());
+
+        dmd.selectFont(System5x7);
+        textWidth = 0;
+        for (int i = 0; i < strlen(dateScrollBuffer); i++) {
+          textWidth += dmd.charWidth(dateScrollBuffer[i]) + 1;
+        }
+      }
+
+      dmd.selectFont(Font5x7Nbox);
+      _hour12 = _hour24 % 12;
+      if (_hour12 == 0) _hour12 = 12;
+
+      sprintf(hr_24, "%02d", _hour12);
+      dmd.drawString(3, -1, hr_24, 2, GRAPHICS_NORMAL);
+
+      sprintf(mn, "%02d", _minute);
+      dmd.drawString(18, -1, mn, 2, GRAPHICS_NORMAL);
+
+      if (_second % 2 == 0) {
+        dmd.drawFilledBox(15, 1, 16, 2, GRAPHICS_OR);
+        dmd.drawFilledBox(15, 4, 16, 5, GRAPHICS_OR);
+      } else {
+        dmd.drawFilledBox(15, 1, 16, 2, GRAPHICS_NOR);
+        dmd.drawFilledBox(15, 4, 16, 5, GRAPHICS_NOR);
+      }
+    }
+
+    if (currentMillis - lastScrollMillis >= scrollInterval) {
+      lastScrollMillis = currentMillis;
+      dmd.drawFilledBox(0, 9, 31, 15, GRAPHICS_NOR); 
+      scrollX--;
+      if (scrollX < -textWidth) {
+        scrollX = 32;
+      }
+      dmd.selectFont(System5x7);
+      dmd.drawString(scrollX, 9, dateScrollBuffer, strlen(dateScrollBuffer), GRAPHICS_NORMAL);
+    }
+    vTaskDelay(pdMS_TO_TICKS(10));
+  }
+}
+
+// --- Clock 8 ---
+void Clock8Task(void *pvParameters)
+{
+  const long interval = 1000;
+  const long switchInterval = 2000;
+
+  unsigned long previousMillis = 0;
+  unsigned long lastSwitchMillis = 0;
+
+  char hr_24[3], mn[3];
+  int displayState = 0;
+
+  const char *dayNames[] = {"SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"};
+  const char *monthNames[] = {"JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"};
+
+  for (;;)
+  {
+    unsigned long currentMillis = millis();
+
+    if (currentMillis - previousMillis >= interval)
+    {
+      previousMillis = currentMillis;
+
+      DateTime now;
+      if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(200))) {
+        now = rtc.now();
+        xSemaphoreGive(i2cMutex);
+      } else {
+        vTaskDelay(pdMS_TO_TICKS(200));
+        continue;
+      }
+      if (now.year() <= 2000 || now.hour() > 23 || now.minute() > 59) {
+        vTaskDelay(pdMS_TO_TICKS(200));
+        continue;
+      } 
+      _hour24 = now.hour();
+      _minute = now.minute();
+      _second = now.second();
+
+      dmd.selectFont(Font5x7Nbox);
+
+      _hour12 = _hour24 % 12;
+      if (_hour12 == 0)
+        _hour12 = 12;
+
+      sprintf(hr_24, "%02d", _hour12);
+      dmd.drawString(3, -1, hr_24, 2, GRAPHICS_NORMAL);
+
+      sprintf(mn, "%02d", _minute);
+      dmd.drawString(18, -1, mn, 2, GRAPHICS_NORMAL);
+
+      if (_second % 2 == 0)
+      {
+        dmd.drawFilledBox(15, 1, 16, 2, GRAPHICS_OR);
+        dmd.drawFilledBox(15, 4, 16, 5, GRAPHICS_OR);
+      }
+      else
+      {
+        dmd.drawFilledBox(15, 1, 16, 2, GRAPHICS_NOR);
+        dmd.drawFilledBox(15, 4, 16, 5, GRAPHICS_NOR);
+      }
+    }
+
+    if (currentMillis - lastSwitchMillis >= switchInterval)
+    {
+      lastSwitchMillis = currentMillis;
+      
+      DateTime now;
+      if (xSemaphoreTake(i2cMutex, pdMS_TO_TICKS(200))) {
+        now = rtc.now();
+        xSemaphoreGive(i2cMutex);
+      } else {
+        vTaskDelay(pdMS_TO_TICKS(200));
+        continue;
+      }
+      if (now.year() <= 2000 || now.hour() > 23 || now.minute() > 59) {
+        vTaskDelay(pdMS_TO_TICKS(200));
+        continue;
+      } 
+      dmd.drawFilledBox(0, 9, 31, 15, GRAPHICS_NOR);
+
+      if (displayState == 0)
+      {
+        dmd.selectFont(System5x7);
+        char weekBuf[5];
+        sprintf(weekBuf, "%s", dayNames[now.dayOfTheWeek()]);
+
+        int x = 8;
+        int y = 9;
+        dmd.drawString(x, y, weekBuf, strlen(weekBuf), GRAPHICS_NORMAL);
+
+        displayState = 1;
+      }
+      else if (displayState == 1)
+      {
+        char dateBuf[3];
+        sprintf(dateBuf, "%02d", now.day());
+
+        dmd.selectFont(Font5x7Nbox);
+        int dateX = 0;
+        int dateY = 8;
+        dmd.drawString(dateX, dateY, dateBuf, strlen(dateBuf), GRAPHICS_NORMAL);
+
+        char monthBuf[4];
+        sprintf(monthBuf, "%s", monthNames[now.month() - 1]);
+
+        dmd.selectFont(System5x7);
+        int monthX = 15;
+        int monthY = 9;
+        dmd.drawString(monthX, monthY, monthBuf, strlen(monthBuf), GRAPHICS_NORMAL);
+
+        displayState = 2;
+      }
+      else
+      {
+        dmd.selectFont(Font5x7Nbox);
+        char yearBuf[5];
+        sprintf(yearBuf, "%d", now.year());
+
+        int yearX = 5;
+        int yearY = 8;
+        dmd.drawString(yearX, yearY, yearBuf, strlen(yearBuf), GRAPHICS_NORMAL);
+
+        displayState = 0;
+      }
+    }
+
+    vTaskDelay(pdMS_TO_TICKS(50));
+  }
+}
+
+================================================================================
+7. OPERATIONAL USER MANUAL
+================================================================================
+Mode Cycling:
+  - Press the BOOT / UP button (GPIO 0) briefly (< 3 seconds).
+  - The display will transition instantly to the next clock mode (Clock 1 through 8).
+  - The selected mode is automatically stored in NVS flash memory.
+
+WiFi Setup / NTP Synchronization:
+  - Press and hold the BOOT / UP button (GPIO 0) for more than 3 seconds.
+  - The P10 screen will display "WIFI SETUP".
+  - Connect your mobile phone or laptop to the WiFi Access Point named "Smart Clock".
+  - A browser portal will open automatically (or visit 192.168.4.1 in your browser).
+  - Select your local WiFi SSID and enter the password.
+  - The system saves credentials and reboots automatically to sync time via NTP.
+
+Brightness Control:
+  - Press the DOWN button (GPIO 33) briefly.
+  - Toggles manual display brightness level between Low (5), Medium (30), and High (50).
+  - Note: Between 00:00 and 07:59, automatic night mode overrides user brightness 
+    setting to maintain minimal light output (level 5).
+
+================================================================================
+8. BUILD & COMPILATION INSTRUCTIONS
+================================================================================
+1. Requirements:
+   - VS Code with PlatformIO IDE extension installed.
+   - ESP32 Development Board connected via USB micro / Type-C.
+
+2. Build & Flash Steps:
+   - Open the project directory in PlatformIO.
+   - Click "Build" (Checkmark icon) or run `pio run` in terminal.
+   - Click "Upload" (Right-arrow icon) or run `pio run --target upload` in terminal.
+   - Open Serial Monitor at 115200 baud to view boot logs and FreeRTOS diagnostics.
+
+================================================================================
+                              END OF DOCUMENTATION
+================================================================================

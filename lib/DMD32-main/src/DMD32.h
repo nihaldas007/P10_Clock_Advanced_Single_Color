@@ -49,10 +49,10 @@ LED Panel Layout in RAM
 // #warning CHANGE THESE TO SEMI-ADJUSTABLE PIN DEFS!
 //ESP32 pins used for the display connection (Using VSPI)
 #define PIN_DMD_nOE		4 		// D4 active low Output Enable, setting this low lights all the LEDs in the selected rows. Can pwm it at very high frequency for brightness control.
-#define PIN_DMD_A		19		// D19
-#define PIN_DMD_B		15		// D15
+#define PIN_DMD_A		16		// D19
+#define PIN_DMD_B		17		// D15
 #define PIN_DMD_CLK		18		// D18_SCK  is SPI Clock if SPI is used
-#define PIN_DMD_SCLK		2		// D02
+#define PIN_DMD_SCLK		19		// D02
 #define PIN_DMD_R_DATA    23	// D23_MOSI is SPI Master Out if SPI is used
 //Define this chip select pin that the Ethernet W5100 IC or other SPI device uses
 //if it is in use during a DMD scan request then scanDisplayBySPI() will exit without conflict! (and skip that scan)

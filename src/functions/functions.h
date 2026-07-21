@@ -39,6 +39,7 @@ void Clock5Task(void *pvParameters);
 void Clock6Task(void *pvParameters);
 void Clock7Task(void *pvParameters);
 void Clock8Task(void *pvParameters);
+void EventScrollTask(void *pvParameters);
 bool myGetLocalTime(struct tm *timeinfo);
 void changeClockMode(int mode);
 void backgroundSyncTask(void *pvParameters);
@@ -65,12 +66,9 @@ void setBrightness(int level)
 // ------------------- Helper: Switch Clock Mode -------------------
 void changeClockMode(int mode)
 {
-    // 1. Delete the currently running clock task if it exists
-    if (clockTaskHandle != NULL)
-    {
-        vTaskDelete(clockTaskHandle);
-        clockTaskHandle = NULL;
-    }
+    // 1. Save old task handle and set to NULL
+    TaskHandle_t oldTask = clockTaskHandle;
+    clockTaskHandle = NULL;
 
     // 2. Clear Screen
     dmd.clearScreen(true);
@@ -107,6 +105,16 @@ void changeClockMode(int mode)
     else if (mode == 7)
     {
         xTaskCreatePinnedToCore(Clock8Task, "Clock8", 4096, NULL, 1, &clockTaskHandle, 1);
+    }
+    else if (mode == 99)
+    {
+        xTaskCreatePinnedToCore(EventScrollTask, "Event", 4096, NULL, 1, &clockTaskHandle, 1);
+    }
+
+    // 4. Delete the old task safely
+    if (oldTask != NULL)
+    {
+        vTaskDelete(oldTask);
     }
 }
 

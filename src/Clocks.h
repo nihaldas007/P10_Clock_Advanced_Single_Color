@@ -7,6 +7,7 @@
 #include <SPI.h>
 #include <time.h>
 #include <RTClib.h>
+#include "events.h"
 
 // Fonts
 #include "fonts/SystemFont5x7.h"
@@ -16,7 +17,7 @@
 #include "fonts/Font6x16.h"
 #include "fonts/SystemFont3x5.h"
 #include "fonts/Font5x10Nbox.h"
-#include "fonts/Font5x10Sbox.h"
+#include "fonts/Arial_black_16.h"
 // ================================================================
 //                        CLOCK TASKS
 // ================================================================
@@ -726,5 +727,36 @@ void Clock8Task(void *pvParameters)
     }
 
     vTaskDelay(pdMS_TO_TICKS(50));
+  }
+}
+
+// ============================================================
+// DYNAMIC EVENT SCROLL TASK
+// ============================================================
+extern void changeClockMode(int mode);
+
+void EventScrollTask(void *pvParameters)
+{
+  const char *msg = currentEventMessage;
+  
+  // Use the biggest font available for full screen
+  dmd.selectFont(Arial_Black_16); 
+  
+  // Set up the marquee starting just off the right edge (x=32) and at top (y=0)
+  dmd.drawMarquee(msg, strlen(msg), 32, 0);
+  
+  boolean done = false;
+  while (!done) {
+    done = dmd.stepMarquee(-1, 0); // Shifts screen left by 1 pixel efficiently
+    vTaskDelay(pdMS_TO_TICKS(EVENT_SCROLL_SPEED_MS)); // Scroll speed
+  }
+  
+  // Done scrolling, restore previous clock mode
+  changeClockMode(currentMode);
+  
+  // The task will be deleted inside changeClockMode by safely deleting the oldTask.
+  // We place an infinite loop here just in case, but it won't be reached.
+  for (;;) {
+      vTaskDelay(pdMS_TO_TICKS(1000));
   }
 }
